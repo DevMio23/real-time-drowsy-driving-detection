@@ -1,130 +1,318 @@
-# Drowsiness Detection System
+# Real-Time Drowsiness Driving Detection (Unified Upgrade)
 
-![image](https://github.com/user-attachments/assets/81ab2ce9-94ed-479b-bb76-d289c99800fc)
-![image](https://github.com/user-attachments/assets/0615e219-f623-47ff-9448-946a9c273500)
-![image](https://github.com/user-attachments/assets/b25705ed-d976-45a3-a080-fe1e12f220fd)
+[![Upstream](https://img.shields.io/badge/Upstream-Prince--213-blue)](https://github.com/Prince-213/real-time-drowsy-driving-detection)
+[![This fork](https://img.shields.io/badge/Fork-DevMio23-green)](https://github.com/DevMio23/real-time-drowsy-driving-detection)
 
-## Overview
+![Demo 1](https://github.com/user-attachments/assets/81ab2ce9-94ed-479b-bb76-d289c99800fc)
+![Demo 2](https://github.com/user-attachments/assets/0615e219-f623-47ff-9448-946a9c273500)
+![Demo 3](https://github.com/user-attachments/assets/b25705ed-d976-45a3-a080-fe1e12f220fd)
 
-The **Drowsiness Detection System** is a project designed to monitor a person's alertness in real-time by analyzing facial features.  
-By utilizing computer vision and machine learning techniques, the system aims to detect signs of drowsiness and provide timely alerts — particularly useful for applications like driver monitoring.
+Monitor driver alertness in real time using facial landmarks, dual YOLOv8 models (eyes + yawn), and a PyQt5 interface. This repository is an **active upgrade** of the upstream project, refactored for thesis work, reliability, and a single maintainable codebase.
 
-This repository focuses on illustrating the full development process, including data capture, auto-labeling, model training, and detection pipeline integration.
+| Repository | Role | Link |
+|------------|------|------|
+| **Upstream (original fork source)** | Baseline implementation, datasets, training notebooks | [Prince-213/real-time-drowsy-driving-detection](https://github.com/Prince-213/real-time-drowsy-driving-detection) |
+| **This repository (your fork)** | Unified app, phased upgrades, documentation | [DevMio23/real-time-drowsy-driving-detection](https://github.com/DevMio23/real-time-drowsy-driving-detection) |
+| **Original author README** | Full baseline docs (install, datasets, training) | [Upstream README.md](https://github.com/Prince-213/real-time-drowsy-driving-detection/blob/main/README.md) |
+
+---
+
+## Why this fork exists
+
+The upstream repo ([Prince-213/real-time-drowsy-driving-detection](https://github.com/Prince-213/real-time-drowsy-driving-detection)) provides a strong computer-vision pipeline (MediaPipe, YOLOv8, PyQt5, data capture, and training notebooks). While using it for research and a thesis, several issues made a dedicated fork necessary:
+
+| Problem (upstream) | Impact | Approach in this fork |
+|--------------------|--------|------------------------|
+| Two entry points (`main.py` and `DrowsinessDetector.py`) with duplicated logic | Fixes in one file did not apply to the other | **One** entry point: `python main.py` + modular `app/` package |
+| Closing the app with **X** could leave threads running | Infinite terminal loop until the shell was killed | `shutdown()`, **Stop Detection**, `closeEvent`, thread-safe Qt signals |
+| High CPU usage on modest laptops | Poor usability during long sessions | Planned Phase 1: FPS cap, inference stride, lighter MediaPipe |
+| Blink events misclassified as yawns | Unreliable metrics for validation | Planned Phase 2: debouncing, ROI/threshold fixes, Kalman smoothing |
+| No session logging / analytics | Hard to produce quantitative thesis results | Planned Phase 3: CSV logs + statistics panel |
+| Alerts partially disabled | Reduced practical safety value | Planned Phase 4: audio, visual, alert history |
+| No static project homepage | Hard for users vs developers to onboard | Planned Phase 6: `web/index.html` + in-app quick start |
+
+This fork preserves the upstream **training pipeline** (`CaptureData.py`, `AutoLabelling.py`, notebooks, `runs/` weights) and focuses upgrades on the **real-time detection application** and documentation.
+
+For the complete original feature list, dataset links, and training workflow, see the [upstream README](https://github.com/Prince-213/real-time-drowsy-driving-detection/blob/main/README.md).
+
+---
+
+## Upgrade and implementation plan
+
+Work proceeds in **phases**. Each phase is implemented and **tested before the next phase starts**. A detailed plan also lives in [`.cursor/plans/drowsiness_system_upgrade_55a19c85.plan.md`](.cursor/plans/drowsiness_system_upgrade_55a19c85.plan.md) (and `implementation plan.paln.md` in the repo root).
+
+### Phase status
+
+| Phase | Focus | Status |
+|-------|--------|--------|
+| **0** | Unify codebase, Welcome → Live UI, graceful shutdown, `app/` package | **Done** |
+| **1** | CPU optimization (FPS cap, inference stride, lighter MediaPipe) | Planned |
+| **2** | Detection accuracy (blink vs yawn, Kalman smoothing) | Planned |
+| **3** | CSV session logging + statistics panel (thesis data) | Planned |
+| **4** | Alerts: audio, visual, history, configurable thresholds | Planned |
+| **5** | Batch video analysis (offline runs + reports) | Planned |
+| **6** | Static homepage (`web/`) + aligned in-app quick start | Planned |
+
+### Planned feature impact
+
+| Feature | Purpose |
+|---------|---------|
+| Event logging & analytics | Timestamped CSV per session; trends for thesis validation |
+| Kalman filter smoothing | Fewer false positives from jittery YOLO outputs |
+| Alert system | Audio + on-frame warnings + alert history |
+| Batch video mode | Test recorded footage; export summaries |
+| Project homepage | User guide + technical deep-dive for contributors |
+
+### Delivery workflow (phase gates)
+
+```mermaid
+flowchart LR
+    P0[Phase 0 Implement]
+    T0[Manual test]
+    OK0{Checklist OK?}
+    P1[Phase 1 CPU]
+    P0 --> T0 --> OK0
+    OK0 -->|Yes| P1
+    OK0 -->|No| Fix[Fix and retest]
+    Fix --> T0
+```
+
+### Target architecture (after all phases)
+
+```mermaid
+flowchart TB
+    subgraph entry [Entry]
+        Run["python main.py"]
+    end
+    subgraph ui [app/ui]
+        Welcome[WelcomePage]
+        Live[DetectionPage]
+        Batch[BatchPage]
+        Welcome --> Live
+        Welcome --> Batch
+    end
+    subgraph core [app/core]
+        Det[detector.py]
+        Log[session_logger.py]
+        Kalman[kalman_smoother.py]
+    end
+    subgraph workers [app/workers]
+        Cap[video_worker threads]
+    end
+    Run --> Welcome
+    Live --> Cap
+    Cap --> Det
+    Det --> Kalman
+    Det --> Log
+    Cap -->|Qt signals| Live
+```
+
+### Current application flow (Phase 0 — implemented)
+
+```mermaid
+flowchart TD
+    Start([Launch python main.py]) --> Welcome[Welcome screen]
+    Welcome -->|Start Detection| Live[Live detection screen]
+    Live -->|Stop or Back to Home| Stop[shutdown: stop threads release camera]
+    Stop --> Welcome
+    Live -->|Window X| Exit([App exits cleanly])
+    Welcome -->|Window X| Exit
+```
+
+---
+
+## Quick start (this fork)
+
+Clone **this** repository (not the upstream URL from the original README):
+
+```bash
+git clone https://github.com/DevMio23/real-time-drowsy-driving-detection.git
+cd real-time-drowsy-driving-detection
+```
+
+### Requirements
+
+- Python 3.10+ recommended  
+- Webcam  
+- Windows/Linux (audio alerts in later phases use `winsound` on Windows)  
+- Trained weights under `runs/detecteye/` and `runs/detectyawn/` (included in repo)
+
+### Install
+
+```bash
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# Linux / macOS
+source .venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+### Run the unified application
+
+```bash
+python main.py
+```
+
+| Step | Action |
+|------|--------|
+| 1 | Welcome screen opens |
+| 2 | Click **Start Detection** |
+| 3 | Allow camera access; live feed and metrics appear |
+| 4 | Click **Stop Detection** or **Back to Home** before closing |
+| 5 | Close the window with **X** when finished |
+
+**Deprecated (compatibility only):**
+
+```bash
+python DrowsinessDetector.py
+```
+
+This prints a notice and launches the same unified app via `main.py`.
+
+### Camera not opening?
+
+Edit [`app/config.py`](app/config.py) and set `CAMERA_INDEX` to `0` or `1` depending on your machine.
+
+### Phase 0 test checklist
+
+Use this before approving Phase 1:
+
+- [ ] `python main.py` launches without errors  
+- [ ] **Start Detection** shows the camera feed  
+- [ ] Metrics panel updates during detection  
+- [ ] **Stop Detection** / **Back to Home** stops the feed; terminal does not hang  
+- [ ] Closing with **X** exits cleanly (no infinite loop)  
+- [ ] `python DrowsinessDetector.py` still forwards to the unified app  
+
+---
+
+## Project structure (this fork)
+
+```text
+real-time-drowsy-driving-detection/
+├── main.py                 # Single entry point — run this
+├── app/
+│   ├── config.py           # Paths, thresholds, camera index
+│   ├── core/
+│   │   └── detector.py     # MediaPipe + YOLO + event logic (no Qt)
+│   ├── workers/
+│   │   └── video_worker.py # Capture/process threads + Qt signals
+│   └── ui/
+│       ├── main_window.py
+│       ├── welcome_page.py
+│       ├── detection_page.py
+│       └── styles.py
+├── DrowsinessDetector.py   # Deprecated shim → main.py
+├── runs/                   # YOLO weights (eye + yawn)
+├── CaptureData.py          # Data collection (from upstream)
+├── AutoLabelling.py        # GroundingDINO labeling (from upstream)
+├── train.ipynb             # Model training (from upstream)
+└── README.md
+```
 
 ---
 
 ## Features
 
-- **Real-time Monitoring**: Detects signs of drowsiness using a webcam or video input.
-- **Dual Model Detection**: Separate YOLOv8 models for eye closure detection and yawning detection.
-- **Facial Landmarks Analysis**: Tracks eye status, head position, and mouth movements.
-- **Data Capture Pipeline**: Tools to collect and organize custom datasets.
-- **Auto Labeling with GroundingDINO**: Automated bounding box generation.
-- **User Interface**: Built with PyQt5 for real-time visualization and alerts.
+### Available now (Phase 0)
+
+- **Unified PyQt5 app** with Welcome and Live detection screens  
+- **Lazy camera start** — webcam only after **Start Detection**  
+- **Graceful shutdown** — Stop, Back, and window close release threads and camera  
+- **Thread-safe UI** — frames and metrics via Qt signals  
+- **Dual YOLOv8 models** + MediaPipe landmarks (same ML stack as upstream)  
+- **Real-time status panel** — blinks, eye closure, yawn duration, alert states  
+
+### Planned (Phases 1–6)
+
+See [Upgrade and implementation plan](#upgrade-and-implementation-plan) above.
+
+### From upstream (unchanged tooling)
+
+- **Data capture** — `CaptureData.py`  
+- **Auto labeling** — `AutoLabelling.py` (GroundingDINO)  
+- **Training** — `train.ipynb`, `LoadData.ipynb`, `RedirectData.ipynb`  
 
 ---
 
-## Key Files
+## How it works
 
-- `AutoLabelling.py`: Script for automated bounding box labeling using GroundingDINO.
-- `CaptureData.py`: Records and logs video data for analysis or training.
-- `main.py`: Unified application entry point (real-time detection UI).
-- `app/`: Application package (detection engine, UI, workers).
-- `DrowsinessDetector.py`: Deprecated shim — use `main.py` instead.
-- `LoadData.ipynb`: Loads and preprocesses datasets.
-- `RedirectData.ipynb`: Organizes and redirects captured data for training.
-- `train.ipynb`: Notebook for training the YOLO models.
+The pipeline matches the upstream design; this fork reorganizes **runtime** code into `app/`:
 
----
+```mermaid
+sequenceDiagram
+    participant Cam as Webcam
+    participant Worker as video_worker
+    participant Engine as detector.py
+    participant UI as PyQt UI
 
-## Installation
+    Cam->>Worker: BGR frames
+    Worker->>Engine: process_frame()
+    Engine->>Engine: MediaPipe ROI
+    Engine->>Engine: YOLO eye + yawn
+    Engine->>Engine: Event logic
+    Engine-->>Worker: annotated frame + metrics
+    Worker-->>UI: signals (main thread)
+    UI-->>UI: video + status panel
+```
 
-1. **Clone the repository:**
-    ```bash
-    git clone https://github.com/tyrerodr/Real_time_drowsy_driving_detection.git
-    cd Real_time_drowsy_driving_detection
-    ```
+### Models
 
-2. **Create a virtual environment:**
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    ```
+| Model | Task | Classes | Weights path |
+|-------|------|---------|----------------|
+| Eye YOLOv8 | Open vs closed eye | `open eye`, `close eye` | `runs/detecteye/train/weights/best.pt` |
+| Yawn YOLOv8 | Yawn vs no yawn | yawn / no yawn | `runs/detectyawn/train/weights/best.pt` |
 
-3. **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+**Training data (upstream):**
 
-4. **Run the detection system:**
-    ```bash
-    python main.py
-    ```
+1. **Eyes** — [Eyes Dataset](https://www.kaggle.com/datasets/charunisa/eyes-dataset/code), [MRL Eye Dataset](https://www.kaggle.com/datasets/tauilabdelilah/mrl-eye-dataset)  
+2. **Yawn** — [Yawning Dataset](https://www.kaggle.com/datasets/deepankarvarma/yawning-dataset-classification?select=yawn)  
 
----
+**Auto labeling:** GroundingDINO (see upstream README and `AutoLabelling.py`).
 
-## Usage
-
-- **Real-Time Detection:** Run `python main.py`, click **Start Detection** and ensure inbuilt or external webcam works, use **Stop Detection** or **Back to Home** before closing the window.
-- **Data Capture:** Use `CaptureData.py` to collect video frames for training or testing.
-- **Training New Models:** Use `train.ipynb` to retrain the models on your custom datasets.
+> **Note:** Uploaded weights are preliminary and not fully converged (per upstream). This fork improves **application logic and UX**; retraining remains optional for higher accuracy.
 
 ---
 
-## How It Works
+## Technologies
 
-The system uses two separate YOLOv8 models:
-
-1. **Eye Detection Model:**
-   - Classifies eyes as open or closed.
-   - Trained on public datasets:
-     - [Eyes Dataset](https://www.kaggle.com/datasets/charunisa/eyes-dataset/code)
-     - [MRL Eye Dataset](https://www.kaggle.com/datasets/tauilabdelilah/mrl-eye-dataset)
-   - ~53,000 images for training, ~3,000 images for validation.
-
-2. **Yawning Detection Model:**
-   - Detects yawning (mouth open) vs not yawning (mouth closed).
-   - Trained on:
-     - [Yawning Dataset](https://www.kaggle.com/datasets/deepankarvarma/yawning-dataset-classification?select=yawn)
-
-**Auto Labeling:**  
-GroundingDINO was used to generate bounding boxes for YOLO training to improve dataset quality.
-
-Once trained, the models' predictions are combined with confidence thresholds and visualized in a PyQt5 GUI.
+| Technology | Use |
+|------------|-----|
+| Python | Application and training scripts |
+| YOLOv8 (Ultralytics) | Eye and yawn detection |
+| OpenCV | Camera capture and image ops |
+| MediaPipe Face Mesh | Facial landmarks / ROIs |
+| PyQt5 | Desktop UI |
+| GroundingDINO | Auto-labeling (training pipeline) |
+| Jupyter | Dataset prep and training notebooks |
 
 ---
 
-## Technologies Used
+## Contributing
 
-- **Python**
-- **YOLOv8** – Object detection framework.
-- **OpenCV** – Computer vision tasks.
-- **GroundingDINO** – Auto-labeling tool.
-- **TensorFlow / Keras** – Model training.
-- **PyQt5** – Graphical user interface.
+1. Fork [DevMio23/real-time-drowsy-driving-detection](https://github.com/DevMio23/real-time-drowsy-driving-detection)  
+2. Create a branch for your phase or fix  
+3. Follow the phased plan; avoid duplicating entry points  
+4. Open a pull request with what was tested  
 
----
-
-## Important Note
-
-This repository is intended primarily to showcase the development process of a drowsiness detection system — including data collection, model training, and real-time integration.
-
-The uploaded model weights are **preliminary** and **not fully trained to convergence**.  
-They are mainly for demonstration purposes, and final production-ready models are maintained separately.
-
-We appreciate any feedback and contributions to improve the system.
+Issues and feedback are welcome, especially on Phase 0 checklist items before Phase 1 begins.
 
 ---
 
-## Future Improvements
+## Acknowledgements
 
-- **Integration with Wearables:** Add heart rate or other vitals monitoring.
-- **Multi-Person Detection:** Extend detection to multiple subjects simultaneously.
-- **Mobile Deployment:** Create a mobile app version for real-time on-the-go monitoring.
+- **Upstream repository:** [Prince-213/real-time-drowsy-driving-detection](https://github.com/Prince-213/real-time-drowsy-driving-detection)  
+- **Original project author (upstream README):** Eng. Tyrone Eduardo Rodriguez Motato — Computer Vision Engineer, Guayaquil, Ecuador — tyrerodr@hotmail.com  
+- **This fork:** Maintained by [DevMio23](https://github.com/DevMio23) as *Unified Drowsiness Detection Upgrade* for research, thesis validation, and improved real-world usability  
+
+If you use the baseline methods or datasets from the upstream project, please credit the [original README](https://github.com/Prince-213/real-time-drowsy-driving-detection/blob/main/README.md) and its author accordingly.
 
 ---
 
-**Eng. Tyrone Eduardo Rodriguez Motato**  
-Computer Vision Engineer  
-Guayaquil, Ecuador  
-Email: tyrerodr@hotmail.com
+## License and disclaimer
+
+This software is for research and educational driver-monitoring demonstrations. It is **not** a certified safety device. Always use proper rest breaks and follow road safety regulations. Model predictions can be inaccurate; do not rely on this app as the sole drowsiness countermeasure.
