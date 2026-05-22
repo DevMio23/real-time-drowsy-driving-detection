@@ -28,7 +28,9 @@ This repository focuses on illustrating the full development process, including 
 
 - `AutoLabelling.py`: Script for automated bounding box labeling using GroundingDINO.
 - `CaptureData.py`: Records and logs video data for analysis or training.
-- `DrowsinessDetector.py`: Core detection script integrating real-time inference and alerts.
+- `main.py`: Unified application entry point (real-time detection UI).
+- `app/`: Application package (detection engine, UI, workers).
+- `DrowsinessDetector.py`: Deprecated shim — use `main.py` instead.
 - `LoadData.ipynb`: Loads and preprocesses datasets.
 - `RedirectData.ipynb`: Organizes and redirects captured data for training.
 - `train.ipynb`: Notebook for training the YOLO models.
@@ -56,14 +58,14 @@ This repository focuses on illustrating the full development process, including 
 
 4. **Run the detection system:**
     ```bash
-    python DrowsinessDetector.py
+    python main.py
     ```
 
 ---
 
 ## Usage
 
-- **Real-Time Detection:** Run `DrowsinessDetector.py` with a connected webcam to monitor drowsiness.
+- **Real-Time Detection:** Run `python main.py`, click **Start Detection** and ensure inbuilt or external webcam works, use **Stop Detection** or **Back to Home** before closing the window.
 - **Data Capture:** Use `CaptureData.py` to collect video frames for training or testing.
 - **Training New Models:** Use `train.ipynb` to retrain the models on your custom datasets.
 
