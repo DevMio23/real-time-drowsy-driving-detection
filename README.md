@@ -3,6 +3,37 @@
 [![Upstream](https://img.shields.io/badge/Upstream-Prince--213-blue)](https://github.com/Prince-213/real-time-drowsy-driving-detection)
 [![This fork](https://img.shields.io/badge/Fork-DevMio23-green)](https://github.com/DevMio23/real-time-drowsy-driving-detection)
 
+
+---
+
+## Table of Contents
+
+- [Why this fork exists](#why-this-fork-exists)
+- [Upgrade and implementation plan](#upgrade-and-implementation-plan)
+  - [Phase status](#phase-status)
+  - [Planned feature impact](#planned-feature-impact)
+  - [Target architecture (after all phases)](#target-architecture-after-all-phases)
+  - [Current application flow (Phase 0 — implemented)](#current-application-flow-phase-0--implemented)
+- [Quick start (this fork)](#quick-start-this-fork)
+  - [Requirements](#requirements)
+  - [Install](#install)
+  - [Run the unified application](#run-the-unified-application)
+  - [Camera not opening?](#camera-not-opening)
+- [Project structure (this fork)](#project-structure-this-fork)
+- [Features](#features)
+  - [Available now (Phase 0)](#available-now-phase-0)
+  - [Planned (Phases 1–6)](#planned-phases-16)
+  - [From upstream (unchanged tooling)](#from-upstream-unchanged-tooling)
+- [How it works](#how-it-works)
+  - [Models](#models)
+- [Technologies](#technologies)
+- [Contributing](#contributing)
+- [Acknowledgements](#acknowledgements)
+- [License and disclaimer](#license-and-disclaimer)
+
+---
+
+
 ![Demo 1](https://github.com/user-attachments/assets/81ab2ce9-94ed-479b-bb76-d289c99800fc)
 ![Demo 2](https://github.com/user-attachments/assets/0615e219-f623-47ff-9448-946a9c273500)
 ![Demo 3](https://github.com/user-attachments/assets/b25705ed-d976-45a3-a080-fe1e12f220fd)
