@@ -65,61 +65,13 @@ Work proceeds in **phases**. Each phase is implemented and **tested before the n
 
 ### Delivery workflow (phase gates)
 
-```mermaid
-flowchart LR
-    P0[Phase 0 Implement]
-    T0[Manual test]
-    OK0{Checklist OK?}
-    P1[Phase 1 CPU]
-    P0 --> T0 --> OK0
-    OK0 -->|Yes| P1
-    OK0 -->|No| Fix[Fix and retest]
-    Fix --> T0
-```
-
 ### Target architecture (after all phases)
 
-```mermaid
-flowchart TB
-    subgraph entry [Entry]
-        Run["python main.py"]
-    end
-    subgraph ui [app/ui]
-        Welcome[WelcomePage]
-        Live[DetectionPage]
-        Batch[BatchPage]
-        Welcome --> Live
-        Welcome --> Batch
-    end
-    subgraph core [app/core]
-        Det[detector.py]
-        Log[session_logger.py]
-        Kalman[kalman_smoother.py]
-    end
-    subgraph workers [app/workers]
-        Cap[video_worker threads]
-    end
-    Run --> Welcome
-    Live --> Cap
-    Cap --> Det
-    Det --> Kalman
-    Det --> Log
-    Cap -->|Qt signals| Live
-```
+![Target architecture](assets/project_architecture.png)
 
 ### Current application flow (Phase 0 — implemented)
 
-```mermaid
-flowchart TD
-    Start([Launch python main.py]) --> Welcome[Welcome screen]
-    Welcome -->|Start Detection| Live[Live detection screen]
-    Live -->|Stop or Back to Home| Stop[shutdown: stop threads release camera]
-    Stop --> Welcome
-    Live -->|Window X| Exit([App exits cleanly])
-    Welcome -->|Window X| Exit
-```
-
----
+![Application flow Phase 0](assets/current_application_flow_phase0.png)
 
 ## Quick start (this fork)
 
@@ -177,19 +129,6 @@ This prints a notice and launches the same unified app via `main.py`.
 
 Edit [`app/config.py`](app/config.py) and set `CAMERA_INDEX` to `0` or `1` depending on your machine.
 
-### Phase 0 test checklist
-
-Use this before approving Phase 1:
-
-- [ ] `python main.py` launches without errors  
-- [ ] **Start Detection** shows the camera feed  
-- [ ] Metrics panel updates during detection  
-- [ ] **Stop Detection** / **Back to Home** stops the feed; terminal does not hang  
-- [ ] Closing with **X** exits cleanly (no infinite loop)  
-- [ ] `python DrowsinessDetector.py` still forwards to the unified app  
-
----
-
 ## Project structure (this fork)
 
 ```text
@@ -243,22 +182,7 @@ See [Upgrade and implementation plan](#upgrade-and-implementation-plan) above.
 
 The pipeline matches the upstream design; this fork reorganizes **runtime** code into `app/`:
 
-```mermaid
-sequenceDiagram
-    participant Cam as Webcam
-    participant Worker as video_worker
-    participant Engine as detector.py
-    participant UI as PyQt UI
-
-    Cam->>Worker: BGR frames
-    Worker->>Engine: process_frame()
-    Engine->>Engine: MediaPipe ROI
-    Engine->>Engine: YOLO eye + yawn
-    Engine->>Engine: Event logic
-    Engine-->>Worker: annotated frame + metrics
-    Worker-->>UI: signals (main thread)
-    UI-->>UI: video + status panel
-```
+![Project pipeline](assets/pipeline.png)
 
 ### Models
 
