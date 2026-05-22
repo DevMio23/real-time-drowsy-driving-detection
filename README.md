@@ -39,8 +39,7 @@ For the complete original feature list, dataset links, and training workflow, se
 
 ## Upgrade and implementation plan
 
-Work proceeds in **phases**. Each phase is implemented and **tested before the next phase starts**. A detailed plan also lives in [`.cursor/plans/drowsiness_system_upgrade_55a19c85.plan.md`](.cursor/plans/drowsiness_system_upgrade_55a19c85.plan.md) (and `implementation plan.paln.md` in the repo root).
-
+Work proceeds in **phases**. Each phase is implemented and **tested before the next phase starts**.
 ### Phase status
 
 | Phase | Focus | Status |
@@ -62,8 +61,6 @@ Work proceeds in **phases**. Each phase is implemented and **tested before the n
 | Alert system | Audio + on-frame warnings + alert history |
 | Batch video mode | Test recorded footage; export summaries |
 | Project homepage | User guide + technical deep-dive for contributors |
-
-### Delivery workflow (phase gates)
 
 ### Target architecture (after all phases)
 
@@ -150,6 +147,7 @@ real-time-drowsy-driving-detection/
 ├── CaptureData.py          # Data collection (from upstream)
 ├── AutoLabelling.py        # GroundingDINO labeling (from upstream)
 ├── train.ipynb             # Model training (from upstream)
+├── requirements.txt        # List of python library requirements
 └── README.md
 ```
 
