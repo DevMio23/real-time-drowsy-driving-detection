@@ -1,3 +1,3 @@
-from app.ui.main_window import MainWindow
+"""UI package — import submodules directly to avoid eager heavy imports."""
 
-__all__ = ["MainWindow"]
+__all__ = ["main_window", "welcome_page", "detection_page"]

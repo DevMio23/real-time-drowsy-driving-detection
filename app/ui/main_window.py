@@ -19,17 +19,20 @@ from app.workers.video_worker import VideoSignals, VideoWorker
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, engine: DrowsinessDetectorEngine | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Driver Drowsiness Detection System")
         self.setGeometry(100, 100, 1000, 700)
         self.setStyleSheet(styles.MAIN_WINDOW_STYLE)
 
-        try:
-            self.engine = DrowsinessDetectorEngine()
-        except Exception as exc:
-            print(f"Error loading models: {exc}")
-            sys.exit(1)
+        if engine is None:
+            # Fallback if constructed without main(); keep Qt-after-ML order in main.py.
+            try:
+                engine = DrowsinessDetectorEngine()
+            except Exception as exc:
+                print(f"Error loading models: {exc}")
+                sys.exit(1)
+        self.engine = engine
 
         self.signals = VideoSignals()
         self.video_worker = VideoWorker(self.engine, self.signals)
@@ -83,10 +86,12 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def _on_frame_ready(self, frame: np.ndarray) -> None:
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         bytes_per_line = ch * w
-        image = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        image = QImage(
+            rgb.tobytes(), w, h, bytes_per_line, QImage.Format_RGB888
+        )
         pixmap = QPixmap.fromImage(image).scaled(
             self.detection_page.video_label.width(),
             self.detection_page.video_label.height(),
