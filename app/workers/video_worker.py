@@ -56,6 +56,9 @@ class VideoWorker:
                 self.cap = None
             return False
 
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+
         self._drain_queue()
         self.capture_thread = threading.Thread(
             target=self._capture_loop, name="capture", daemon=True
@@ -97,25 +100,32 @@ class VideoWorker:
                 break
 
     def _capture_loop(self) -> None:
+        interval = 1.0 / config.CAPTURE_FPS
+
         while not self.stop_event.is_set() and self.cap is not None and self.cap.isOpened():
+            loop_start = time.perf_counter()
             ret, frame = self.cap.read()
             if not ret:
                 break
-            try:
-                self.frame_queue.put(frame, block=False)
-            except queue.Full:
-                try:
-                    self.frame_queue.get_nowait()
-                except queue.Empty:
-                    pass
+
+            while not self.stop_event.is_set():
                 try:
                     self.frame_queue.put(frame, block=False)
+                    break
                 except queue.Full:
-                    pass
-            time.sleep(config.CAPTURE_SLEEP_S)
+                    try:
+                        self.frame_queue.get_nowait()
+                    except queue.Empty:
+                        break
+
+            elapsed = time.perf_counter() - loop_start
+            sleep_s = interval - elapsed
+            if sleep_s > 0:
+                time.sleep(sleep_s)
 
     def _process_loop(self) -> None:
-        frame_time = 1.0 / config.TARGET_FPS
+        target_interval = 1.0 / config.TARGET_PROCESS_FPS
+        last_tick = time.perf_counter()
 
         while not self.stop_event.is_set():
             try:
@@ -123,14 +133,23 @@ class VideoWorker:
             except queue.Empty:
                 continue
 
-            start = time.time()
+            now = time.perf_counter()
+            delta_s = now - last_tick
+            last_tick = now
+            if delta_s <= 0 or delta_s > 0.5:
+                delta_s = 1.0 / config.TARGET_PROCESS_FPS
+
+            loop_start = now
             try:
-                annotated, metrics = self.engine.process_frame(frame)
+                annotated, metrics = self.engine.process_frame(
+                    frame, delta_s=delta_s
+                )
                 self.signals.frame_ready.emit(annotated.copy())
                 self.signals.metrics_ready.emit(metrics)
             except Exception as exc:
                 print(f"Processing error: {exc}")
 
-            elapsed = time.time() - start
-            if elapsed < frame_time:
-                time.sleep(frame_time - elapsed)
+            elapsed = time.perf_counter() - loop_start
+            sleep_s = target_interval - elapsed
+            if sleep_s > 0:
+                time.sleep(sleep_s)

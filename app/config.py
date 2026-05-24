@@ -8,11 +8,19 @@ EYE_MODEL_PATH = PROJECT_ROOT / "runs" / "detecteye" / "train" / "weights" / "be
 YAWN_MODEL_PATH = PROJECT_ROOT / "runs" / "detectyawn" / "train" / "weights" / "best.pt"
 
 CAMERA_INDEX = 0
-FRAME_QUEUE_SIZE = 2
-CAPTURE_SLEEP_S = 0.01
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+
+# Phase 1 — CPU tuning (Ryzen 5650U class laptops)
+FRAME_QUEUE_SIZE = 1  # keep only the latest frame
+CAPTURE_FPS = 15
+TARGET_PROCESS_FPS = 12
 PROCESS_QUEUE_TIMEOUT_S = 0.1
 THREAD_JOIN_TIMEOUT_S = 2.0
-TARGET_FPS = 30
+
+YOLO_IMGSZ = 160
+YOLO_INFERENCE_STRIDE = 2  # run eye+yawn models every Nth processed frames
+MEDIAPIPE_STRIDE = 1  # landmark pass every Nth frame (1 = every processed frame)
 
 YAWN_THRESHOLD = 2.0
 MICROSLEEP_THRESHOLD = 1.2
