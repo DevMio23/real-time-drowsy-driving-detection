@@ -13,7 +13,7 @@
   - [Phase status](#phase-status)
   - [Planned feature impact](#planned-feature-impact)
   - [Target architecture (after all phases)](#target-architecture-after-all-phases)
-  - [Current application flow (Phase 0 — implemented)](#current-application-flow-phase-0--implemented)
+  - [Current application flow (Phase 2 — implemented)](#current-application-flow-phase-0--implemented)
 - [Quick start (this fork)](#quick-start-this-fork)
   - [Requirements](#requirements)
   - [Install](#install)
