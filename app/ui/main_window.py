@@ -47,11 +47,16 @@ class MainWindow(QMainWindow):
         self.detection_page = DetectionPage(
             on_stop=self._stop_and_home,
             on_back=self._stop_and_home,
+            on_debug_toggle=self._on_debug_toggle,
         )
+        self.detection_page.debug_checkbox.setChecked(self.engine.show_debug_overlay)
 
         self.stacked.addWidget(self.welcome_page)
         self.stacked.addWidget(self.detection_page)
         self.stacked.setCurrentIndex(config.PAGE_WELCOME)
+
+    def _on_debug_toggle(self, enabled: bool) -> None:
+        self.engine.show_debug_overlay = enabled
 
     def _go_to_detection(self) -> None:
         self.stacked.setCurrentIndex(config.PAGE_DETECTION)
@@ -121,6 +126,13 @@ class MainWindow(QMainWindow):
             f"<p><b>Left / right eye:</b> {metrics.left_eye_state or '—'} / "
             f"{metrics.right_eye_state or '—'}</p>"
             f"<p><b>Yawn state:</b> {metrics.yawn_state or '—'}</p>"
+        )
+        if metrics.yawn_suppressed:
+            html += (
+                "<p style='font-size: 11px; color: #e67e22;'>"
+                "Yawn counting paused while eyes are closed</p>"
+            )
+        html += (
             f"<p style='font-size: 11px; color: #95a5a6;'>"
             f"Process ~{metrics.process_fps:.1f} fps "
             f"(target {config.TARGET_PROCESS_FPS})</p>"
