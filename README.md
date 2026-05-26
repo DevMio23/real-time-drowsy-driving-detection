@@ -77,7 +77,7 @@ Work proceeds in **phases**. Each phase is implemented and **tested before the n
 |-------|--------|--------|
 | **0** | Unify codebase, Welcome → Live UI, graceful shutdown, `app/` package | **Done** |
 | **1** | CPU optimization (FPS cap, inference stride, lighter MediaPipe) | **Done** |
-| **2** | Detection accuracy (blink vs yawn, Kalman smoothing) | Planned |
+| **2** | Detection accuracy (blink vs yawn, Kalman smoothing) | **Done** |
 | **3** | CSV session logging + statistics panel (thesis data) | Planned |
 | **4** | Alerts: audio, visual, history, configurable thresholds | Planned |
 | **5** | Batch video analysis (offline runs + reports) | Planned |
@@ -186,7 +186,7 @@ real-time-drowsy-driving-detection/
 
 ## Features
 
-### Available now (Phases 0–1)
+### Available now (Phases 0–2)
 
 - **Unified PyQt5 app** with Welcome and Live detection screens  
 - **Lazy camera start** — webcam only after **Start Detection**  
@@ -198,7 +198,9 @@ real-time-drowsy-driving-detection/
 
 Tune in [`app/config.py`](app/config.py): `TARGET_PROCESS_FPS`, `YOLO_INFERENCE_STRIDE`, `YOLO_IMGSZ`.
 
-### Planned (Phases 2–6)
+- **Accuracy tuning** — Kalman-smoothed scores, 3-frame confirmation, yawn debounce (0.5s), no yawn counting when both eyes are closed; optional **Show debug overlay** on the detection screen.
+
+### Planned (Phases 3–6)
 
 See [Upgrade and implementation plan](#upgrade-and-implementation-plan) above.
 
