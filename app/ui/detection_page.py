@@ -2,16 +2,24 @@
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QCheckBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app.ui import styles
 
 
 class DetectionPage(QWidget):
-    def __init__(self, on_stop, on_back, parent=None):
+    def __init__(self, on_stop, on_back, on_debug_toggle=None, parent=None):
         super().__init__(parent)
         self._on_stop = on_stop
         self._on_back = on_back
+        self._on_debug_toggle = on_debug_toggle
 
         root = QHBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -48,7 +56,13 @@ class DetectionPage(QWidget):
         back_btn.setCursor(Qt.PointingHandCursor)
         back_btn.clicked.connect(self._on_back)
 
+        self.debug_checkbox = QCheckBox("Show debug overlay")
+        self.debug_checkbox.setStyleSheet(f"color: {styles.TEXT_DARK};")
+        if self._on_debug_toggle is not None:
+            self.debug_checkbox.toggled.connect(self._on_debug_toggle)
+
         panel_layout.addWidget(self.info_label)
+        panel_layout.addWidget(self.debug_checkbox)
         panel_layout.addStretch(1)
         panel_layout.addWidget(stop_btn)
         panel_layout.addWidget(back_btn)
