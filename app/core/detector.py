@@ -21,6 +21,7 @@ class DetectionMetrics:
     alert_active: bool = False
     alert_html: str = ""
     recent_blinks: int = 0
+    session_blinks: int = 0
     eyes_closed_duration: float = 0.0
     yawn_duration: float = 0.0
     total_yawns: int = 0
@@ -46,7 +47,7 @@ class _CachedRois:
 
 @dataclass
 class _PendingState:
-    target: str = "Open"
+    target: str = ""
     count: int = 0
 
 
@@ -78,10 +79,9 @@ class DrowsinessDetectorEngine:
         self._left_kalman = ScalarKalmanFilter(initial=0.0)
         self._right_kalman = ScalarKalmanFilter(initial=0.0)
         self._yawn_kalman = ScalarKalmanFilter(initial=0.0)
-
-        self._left_pending = _PendingState(target="Open")
-        self._right_pending = _PendingState(target="Open")
-        self._yawn_pending = _PendingState(target="No Yawn")
+        self._left_pending = _PendingState()
+        self._right_pending = _PendingState()
+        self._yawn_pending = _PendingState()
 
         self.show_debug_overlay = config.SHOW_DEBUG_OVERLAY
 
@@ -122,25 +122,59 @@ class DrowsinessDetectorEngine:
         self._left_kalman.reset(0.0)
         self._right_kalman.reset(0.0)
         self._yawn_kalman.reset(0.0)
-        self._left_pending = _PendingState(target="Open")
-        self._right_pending = _PendingState(target="Open")
-        self._yawn_pending = _PendingState(target="No Yawn")
 
-    @staticmethod
-    def _eye_closed_measurement(class_id: int, confidence: float) -> float | None:
-        if class_id == 1 and confidence >= config.EYE_CONFIDENCE:
-            return confidence
-        if class_id == 0 and confidence >= config.EYE_CONFIDENCE:
-            return 1.0 - confidence
-        return None
+    def predict_eye(self, eye_frame: np.ndarray, eye_state: str) -> str:
+        """Direct YOLO classification (Phase 1 style) — responsive to blinks."""
+        try:
+            results_eye = self.detecteye.predict(
+                eye_frame, verbose=False, imgsz=config.YOLO_IMGSZ
+            )
+            boxes = results_eye[0].boxes
+            if len(boxes) == 0:
+                return eye_state
 
-    @staticmethod
-    def _yawn_measurement(class_id: int, confidence: float) -> float | None:
-        if class_id == 0 and confidence >= config.YAWN_CONFIDENCE:
-            return confidence
-        if class_id == 1 and confidence >= config.NO_YAWN_CONFIDENCE:
-            return 1.0 - confidence
-        return None
+            confidences = boxes.conf.cpu().numpy()
+            class_ids = boxes.cls.cpu().numpy()
+            max_idx = int(np.argmax(confidences))
+            class_id = int(class_ids[max_idx])
+            confidence = float(confidences[max_idx])
+
+            if class_id == 1 and confidence >= config.EYE_CONFIDENCE:
+                return "Closed"
+            if class_id == 0 and confidence >= config.EYE_CONFIDENCE:
+                return "Open"
+            return eye_state
+        except Exception:
+            return eye_state
+
+    def predict_yawn(self, yawn_frame: np.ndarray | None) -> None:
+        """Direct YOLO classification (Phase 1 style)."""
+        if yawn_frame is None or yawn_frame.size == 0:
+            self.yawn_state = "No Yawn"
+            return
+
+        try:
+            results_yawn = self.detectyawn.predict(
+                yawn_frame, verbose=False, imgsz=config.YOLO_IMGSZ
+            )
+            boxes = results_yawn[0].boxes
+            if len(boxes) == 0:
+                self.yawn_state = "No Yawn"
+                return
+
+            confidences = boxes.conf.cpu().numpy()
+            class_ids = boxes.cls.cpu().numpy()
+            max_idx = int(np.argmax(confidences))
+            class_id = int(class_ids[max_idx])
+            confidence = float(confidences[max_idx])
+
+            if class_id == 0 and confidence >= config.YAWN_CONFIDENCE:
+                self.yawn_state = "Yawn"
+            elif class_id == 1 and confidence >= config.NO_YAWN_CONFIDENCE:
+                self.yawn_state = "No Yawn"
+        except Exception as exc:
+            print(f"Yawn prediction error: {exc}")
+            self.yawn_state = "No Yawn"
 
     def _measure_eye(self, eye_frame: np.ndarray) -> float | None:
         try:
@@ -153,9 +187,13 @@ class DrowsinessDetectorEngine:
             confidences = boxes.conf.cpu().numpy()
             class_ids = boxes.cls.cpu().numpy()
             max_idx = int(np.argmax(confidences))
-            return self._eye_closed_measurement(
-                int(class_ids[max_idx]), float(confidences[max_idx])
-            )
+            class_id = int(class_ids[max_idx])
+            conf = float(confidences[max_idx])
+            if class_id == 1 and conf >= config.EYE_CONFIDENCE:
+                return conf
+            if class_id == 0 and conf >= config.EYE_CONFIDENCE:
+                return 1.0 - conf
+            return None
         except Exception:
             return None
 
@@ -172,83 +210,56 @@ class DrowsinessDetectorEngine:
             confidences = boxes.conf.cpu().numpy()
             class_ids = boxes.cls.cpu().numpy()
             max_idx = int(np.argmax(confidences))
-            measured = self._yawn_measurement(
-                int(class_ids[max_idx]), float(confidences[max_idx])
-            )
-            return measured if measured is not None else None
-        except Exception as exc:
-            print(f"Yawn prediction error: {exc}")
+            class_id = int(class_ids[max_idx])
+            conf = float(confidences[max_idx])
+            if class_id == 0 and conf >= config.YAWN_CONFIDENCE:
+                return conf
+            if class_id == 1 and conf >= config.NO_YAWN_CONFIDENCE:
+                return 1.0 - conf
+            return None
+        except Exception:
             return None
 
-    @staticmethod
-    def _score_to_binary_state(
-        score: float,
-        current: str,
-        high: float,
-        low: float,
-        closed_label: str,
-        open_label: str,
-    ) -> str:
-        if current == closed_label:
-            return closed_label if score > low else open_label
-        return closed_label if score > high else open_label
+    def _apply_smoothed_states(self, rois: _CachedRois) -> None:
+        if rois.left_eye is not None:
+            left_m = self._measure_eye(rois.left_eye)
+            if left_m is not None:
+                self._left_kalman.update(left_m)
+        if rois.right_eye is not None:
+            right_m = self._measure_eye(rois.right_eye)
+            if right_m is not None:
+                self._right_kalman.update(right_m)
+        yawn_m = self._measure_yawn(rois.mouth)
+        if yawn_m is not None:
+            self._yawn_kalman.update(yawn_m)
 
-    def _apply_pending_state(
-        self,
-        pending: _PendingState,
-        proposed: str,
-        current: str,
-    ) -> str:
-        if proposed == pending.target:
-            pending.count += 1
-        else:
-            pending.target = proposed
-            pending.count = 1
-        if pending.count >= config.STATE_CONFIRM_FRAMES:
-            return pending.target
-        return current
+        if self._left_kalman.x >= 0.5:
+            self.left_eye_state = "Closed"
+        elif self._left_kalman.x <= 0.35:
+            self.left_eye_state = "Open"
+        if self._right_kalman.x >= 0.5:
+            self.right_eye_state = "Closed"
+        elif self._right_kalman.x <= 0.35:
+            self.right_eye_state = "Open"
+        if self._yawn_kalman.x >= 0.5:
+            self.yawn_state = "Yawn"
+        elif self._yawn_kalman.x <= 0.35:
+            self.yawn_state = "No Yawn"
 
-    def _update_eye_states_from_scores(self) -> None:
-        left_score = self._left_kalman.x
-        right_score = self._right_kalman.x
+    def _run_yolo_on_rois(self, rois: _CachedRois) -> None:
+        if config.USE_KALMAN_SMOOTHING:
+            self._apply_smoothed_states(rois)
+            return
 
-        left_proposed = self._score_to_binary_state(
-            left_score,
-            self.left_eye_state,
-            config.EYE_CLOSED_SCORE_HIGH,
-            config.EYE_CLOSED_SCORE_LOW,
-            "Closed",
-            "Open",
-        )
-        right_proposed = self._score_to_binary_state(
-            right_score,
-            self.right_eye_state,
-            config.EYE_CLOSED_SCORE_HIGH,
-            config.EYE_CLOSED_SCORE_LOW,
-            "Closed",
-            "Open",
-        )
-
-        self.left_eye_state = self._apply_pending_state(
-            self._left_pending, left_proposed, self.left_eye_state
-        )
-        self.right_eye_state = self._apply_pending_state(
-            self._right_pending, right_proposed, self.right_eye_state
-        )
-
-    def _update_yawn_state_from_score(self) -> None:
-        yawn_score = self._yawn_kalman.x
-        proposed = self._score_to_binary_state(
-            yawn_score,
-            self.yawn_state,
-            config.YAWN_SCORE_HIGH,
-            config.YAWN_SCORE_LOW,
-            "Yawn",
-            "No Yawn",
-        )
-        self.yawn_state = self._apply_pending_state(
-            self._yawn_pending, proposed, self.yawn_state
-        )
+        if rois.left_eye is not None:
+            self.left_eye_state = self.predict_eye(
+                rois.left_eye, self.left_eye_state
+            )
+        if rois.right_eye is not None:
+            self.right_eye_state = self.predict_eye(
+                rois.right_eye, self.right_eye_state
+            )
+        self.predict_yawn(rois.mouth)
 
     def _extract_rois(
         self, frame: np.ndarray, face_landmarks
@@ -312,8 +323,15 @@ class DrowsinessDetectorEngine:
     def _both_eyes_closed(self) -> bool:
         return self.left_eye_state == "Closed" and self.right_eye_state == "Closed"
 
+    def _should_suppress_yawn_count(self) -> bool:
+        if not config.SUPPRESS_YAWN_COUNT_WHEN_EYES_CLOSED:
+            return False
+        return (
+            self._both_eyes_closed()
+            and self.eyes_closed_duration >= config.YAWN_SUPPRESS_MIN_EYES_CLOSED_S
+        )
+
     def _update_event_logic(self, frame_time: float) -> bool:
-        """Update blink/microsleep/yawn counters. Returns True if yawn was suppressed."""
         both_closed = self._both_eyes_closed()
         yawn_suppressed = False
 
@@ -330,23 +348,24 @@ class DrowsinessDetectorEngine:
                 self.right_eye_still_closed = False
             self.eyes_closed_duration = 0.0
 
-        if config.SUPPRESS_YAWN_WHEN_EYES_CLOSED and both_closed:
-            self.yawn_candidate_duration = 0.0
-            if self.yawn_in_progress:
-                self.yawn_in_progress = False
-            self.yawn_duration = 0.0
-            return True
+        suppress_count = self._should_suppress_yawn_count()
 
         if self.yawn_state == "Yawn":
-            self.yawn_candidate_duration += frame_time
-            if (
-                not self.yawn_in_progress
-                and self.yawn_candidate_duration >= config.YAWN_MIN_DURATION_S
-            ):
-                self.yawn_in_progress = True
-                self.yawns += 1
-            if self.yawn_in_progress:
-                self.yawn_duration += frame_time
+            if suppress_count:
+                yawn_suppressed = True
+                self.yawn_candidate_duration = 0.0
+                if self.yawn_in_progress:
+                    self.yawn_in_progress = False
+                self.yawn_duration = 0.0
+            else:
+                if not self.yawn_in_progress:
+                    self.yawn_candidate_duration += frame_time
+                    if self.yawn_candidate_duration >= config.YAWN_MIN_DURATION_S:
+                        self.yawn_in_progress = True
+                        self.yawns += 1
+                        self.yawn_candidate_duration = 0.0
+                else:
+                    self.yawn_duration += frame_time
         else:
             self.yawn_candidate_duration = 0.0
             if self.yawn_in_progress:
@@ -363,6 +382,14 @@ class DrowsinessDetectorEngine:
             self._fps_frame_count = 0
             self._fps_window_start = time.perf_counter()
         return self._last_process_fps
+
+    def _eye_scores_for_display(self) -> tuple[float, float, float]:
+        if config.USE_KALMAN_SMOOTHING:
+            return self._left_kalman.x, self._right_kalman.x, self._yawn_kalman.x
+        left_s = 1.0 if self.left_eye_state == "Closed" else 0.0
+        right_s = 1.0 if self.right_eye_state == "Closed" else 0.0
+        yawn_s = 1.0 if self.yawn_state == "Yawn" else 0.0
+        return left_s, right_s, yawn_s
 
     def process_frame(
         self,
@@ -392,30 +419,21 @@ class DrowsinessDetectorEngine:
 
         rois = self._cached_rois
         if run_yolo and rois.valid:
-            if rois.left_eye is not None:
-                left_m = self._measure_eye(rois.left_eye)
-                if left_m is not None:
-                    self._left_kalman.update(left_m)
-            if rois.right_eye is not None:
-                right_m = self._measure_eye(rois.right_eye)
-                if right_m is not None:
-                    self._right_kalman.update(right_m)
-            yawn_m = self._measure_yawn(rois.mouth)
-            if yawn_m is not None:
-                self._yawn_kalman.update(yawn_m)
-
-            self._update_eye_states_from_scores()
-            self._update_yawn_state_from_score()
+            self._run_yolo_on_rois(rois)
 
         yawn_suppressed = False
         if rois.valid:
             yawn_suppressed = self._update_event_logic(frame_time)
 
         process_fps = self._tick_fps_counter()
+        left_s, right_s, yawn_s = self._eye_scores_for_display()
         metrics = self._build_metrics(
             process_fps=process_fps,
             yolo_ran=run_yolo,
             yawn_suppressed=yawn_suppressed,
+            left_score=left_s,
+            right_score=right_s,
+            yawn_score=yawn_s,
         )
         self._draw_annotations(frame, rois.annotation_points, metrics)
         return frame, metrics
@@ -426,6 +444,9 @@ class DrowsinessDetectorEngine:
         process_fps: float,
         yolo_ran: bool,
         yawn_suppressed: bool,
+        left_score: float,
+        right_score: float,
+        yawn_score: float,
     ) -> DetectionMetrics:
         current_time = time.time()
         self.blink_timestamps = [
@@ -465,6 +486,7 @@ class DrowsinessDetectorEngine:
             alert_active=alert_active,
             alert_html=alert_html,
             recent_blinks=recent_blinks,
+            session_blinks=self.blinks,
             eyes_closed_duration=self.eyes_closed_duration,
             yawn_duration=self.yawn_duration,
             total_yawns=self.yawns,
@@ -473,9 +495,9 @@ class DrowsinessDetectorEngine:
             yawn_state=self.yawn_state,
             process_fps=process_fps,
             yolo_ran=yolo_ran,
-            left_eye_score=self._left_kalman.x,
-            right_eye_score=self._right_kalman.x,
-            yawn_score=self._yawn_kalman.x,
+            left_eye_score=left_score,
+            right_eye_score=right_score,
+            yawn_score=yawn_score,
             yawn_suppressed=yawn_suppressed,
         )
 
@@ -488,36 +510,36 @@ class DrowsinessDetectorEngine:
         for x, y in points:
             cv2.circle(frame, (x, y), 2, (0, 255, 0), -1)
 
+        eye_text = f"L:{metrics.left_eye_state} R:{metrics.right_eye_state}"
+        cv2.putText(
+            frame, eye_text, (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
+        )
+        cv2.putText(
+            frame, f"Yawn: {metrics.yawn_state}", (10, 48),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
+        )
+
         if metrics.alert_active:
             cv2.putText(
-                frame,
-                "ALERT",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.0,
-                (0, 0, 255),
-                2,
+                frame, "ALERT", (10, 78),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2,
             )
 
         if not self.show_debug_overlay:
             return
 
-        y = 60
+        y = 100
         lines = [
-            f"L:{metrics.left_eye_state} ({metrics.left_eye_score:.2f})",
-            f"R:{metrics.right_eye_state} ({metrics.right_eye_score:.2f})",
-            f"Y:{metrics.yawn_state} ({metrics.yawn_score:.2f})",
+            f"L score:{metrics.left_eye_score:.2f}",
+            f"R score:{metrics.right_eye_score:.2f}",
+            f"Y score:{metrics.yawn_score:.2f}",
         ]
         if metrics.yawn_suppressed:
-            lines.append("Yawn suppressed (eyes closed)")
+            lines.append("Yawn count paused (eyes closed)")
         for line in lines:
             cv2.putText(
-                frame,
-                line,
-                (10, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                (0, 255, 255),
-                1,
+                frame, line, (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1,
             )
-            y += 22
+            y += 20

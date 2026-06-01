@@ -118,7 +118,8 @@ class MainWindow(QMainWindow):
             "<h2 style='text-align: center; color: #3498db;'>Driver Status</h2>"
             "<hr style='border: 1px solid #bdc3c7;'/>"
             f"{metrics.alert_html}"
-            f"<p><b>Recent blinks:</b> {metrics.recent_blinks} "
+            f"<p><b>Session blinks:</b> {metrics.session_blinks} | "
+            f"<b>Recent:</b> {metrics.recent_blinks} "
             f"(last {config.BLINK_WINDOW}s)</p>"
             f"<p><b>Eyes closed:</b> {metrics.eyes_closed_duration:.2f}s</p>"
             f"<p><b>Current yawn:</b> {metrics.yawn_duration:.2f}s</p>"
@@ -130,7 +131,8 @@ class MainWindow(QMainWindow):
         if metrics.yawn_suppressed:
             html += (
                 "<p style='font-size: 11px; color: #e67e22;'>"
-                "Yawn counting paused while eyes are closed</p>"
+                "Yawn count paused (eyes closed &gt; "
+                f"{config.YAWN_SUPPRESS_MIN_EYES_CLOSED_S}s)</p>"
             )
         html += (
             f"<p style='font-size: 11px; color: #95a5a6;'>"
