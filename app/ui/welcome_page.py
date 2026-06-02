@@ -8,9 +8,10 @@ from app.ui import styles
 
 
 class WelcomePage(QWidget):
-    def __init__(self, on_start, parent=None):
+    def __init__(self, on_start, on_batch, parent=None):
         super().__init__(parent)
         self._on_start = on_start
+        self._on_batch = on_batch
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -42,9 +43,16 @@ class WelcomePage(QWidget):
         start_btn.setCursor(Qt.PointingHandCursor)
         start_btn.clicked.connect(self._on_start)
 
+        batch_btn = QPushButton("Analyze Saved Video")
+        batch_btn.setFont(QFont("Segoe UI", 13))
+        batch_btn.setStyleSheet(styles.BTN_SECONDARY)
+        batch_btn.setCursor(Qt.PointingHandCursor)
+        batch_btn.clicked.connect(self._on_batch)
+
         layout.addWidget(title)
         layout.addWidget(desc)
         layout.addWidget(start_btn, alignment=Qt.AlignCenter)
+        layout.addWidget(batch_btn, alignment=Qt.AlignCenter)
 
         self.setLayout(layout)
         self.setStyleSheet(f"background-color: {styles.APP_BACKGROUND};")

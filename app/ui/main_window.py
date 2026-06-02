@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 
 import cv2
 import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget
+from PyQt5.QtWidgets import QApplication, QFileDialog, QMainWindow, QStackedWidget
 
 from app import config
 from app.core.alert_manager import AlertManager
 from app.core.detector import DetectionMetrics, DrowsinessDetectorEngine
 from app.core.session_logger import SessionLogger
+from app.ui.batch_page import BatchPage
 from app.ui.detection_page import DetectionPage
 from app.ui import styles
 from app.ui.welcome_page import WelcomePage
+from app.workers.batch_worker import BatchSignals, BatchSummary, BatchVideoWorker
 from app.workers.video_worker import VideoSignals, VideoWorker
 
 
@@ -43,26 +46,48 @@ class MainWindow(QMainWindow):
         self.signals.frame_ready.connect(self._on_frame_ready)
         self.signals.metrics_ready.connect(self._on_metrics_ready)
         self.signals.camera_error.connect(self._on_camera_error)
+        self.batch_signals = BatchSignals()
+        self.batch_worker = BatchVideoWorker(
+            self.engine, self.session_logger, self.batch_signals
+        )
+        self.batch_signals.frame_ready.connect(self._on_batch_frame_ready)
+        self.batch_signals.metrics_ready.connect(self._on_batch_metrics_ready)
+        self.batch_signals.progress.connect(self._on_batch_progress)
+        self.batch_signals.status.connect(self._on_batch_status)
+        self.batch_signals.finished.connect(self._on_batch_finished)
+        self.batch_signals.error.connect(self._on_batch_error)
+        self.batch_video_path = ""
 
         self.stacked = QStackedWidget()
         self.setCentralWidget(self.stacked)
 
-        self.welcome_page = WelcomePage(on_start=self._go_to_detection)
+        self.welcome_page = WelcomePage(
+            on_start=self._go_to_detection,
+            on_batch=self._go_to_batch,
+        )
         self.detection_page = DetectionPage(
             on_stop=self._stop_and_home,
             on_back=self._stop_and_home,
             on_debug_toggle=self._on_debug_toggle,
         )
+        self.batch_page = BatchPage(
+            on_back=self._go_home,
+            on_pick_video=self._pick_batch_video,
+            on_start=self._start_batch_analysis,
+            on_stop=self._stop_batch_analysis,
+        )
         self.detection_page.debug_checkbox.setChecked(self.engine.show_debug_overlay)
 
         self.stacked.addWidget(self.welcome_page)
         self.stacked.addWidget(self.detection_page)
+        self.stacked.addWidget(self.batch_page)
         self.stacked.setCurrentIndex(config.PAGE_WELCOME)
 
     def _on_debug_toggle(self, enabled: bool) -> None:
         self.engine.show_debug_overlay = enabled
 
     def _go_to_detection(self) -> None:
+        self._stop_batch_analysis()
         self.stacked.setCurrentIndex(config.PAGE_DETECTION)
         self.detection_page.reset_video_style()
         self.detection_page.video_label.setText("Starting camera...")
@@ -83,6 +108,14 @@ class MainWindow(QMainWindow):
         self.detection_page.set_stopped_message()
         self.detection_page.video_label.clear()
         self.detection_page.video_label.setText("Camera feed stopped.")
+        self._go_home()
+
+    def _go_to_batch(self) -> None:
+        self.shutdown_detection()
+        self.stacked.setCurrentIndex(config.PAGE_BATCH)
+
+    def _go_home(self) -> None:
+        self._stop_batch_analysis()
         self.stacked.setCurrentIndex(config.PAGE_WELCOME)
 
     def shutdown_detection(self) -> None:
@@ -93,6 +126,7 @@ class MainWindow(QMainWindow):
             self.session_logger.end_session()
 
     def shutdown(self) -> None:
+        self._stop_batch_analysis()
         self.shutdown_detection()
         self.engine.close()
 
@@ -197,3 +231,76 @@ class MainWindow(QMainWindow):
         if self.session_logger.is_active:
             self.session_logger.end_session()
         self.detection_page.set_camera_error(message)
+
+    def _pick_batch_video(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Video for Batch Analysis",
+            str(Path.home()),
+            "Video files (*.mp4 *.avi *.mov *.mkv *.wmv);;All files (*.*)",
+        )
+        if not path:
+            return
+        self.batch_video_path = path
+        self.batch_page.set_video_path(path)
+        self.batch_page.append_summary(f"Selected video: {path}")
+
+    def _start_batch_analysis(self) -> None:
+        if not self.batch_video_path or self.batch_worker.is_running:
+            return
+        self.batch_page.clear_summary()
+        self.batch_page.append_summary("Starting batch analysis...")
+        self.batch_page.preview_label.setText("Processing video...")
+        self.batch_page.progress.setValue(0)
+        self.batch_page.set_running(True)
+        if not self.batch_worker.start(self.batch_video_path):
+            self.batch_page.set_running(False)
+            self.batch_page.append_summary("Could not start batch worker.")
+
+    def _stop_batch_analysis(self) -> None:
+        if self.batch_worker.is_running:
+            self.batch_worker.stop()
+            self.batch_page.append_summary("Batch analysis stopped by user.")
+        self.batch_page.set_running(False)
+
+    def _on_batch_frame_ready(self, frame: np.ndarray) -> None:
+        if self.stacked.currentIndex() != config.PAGE_BATCH:
+            return
+        rgb = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb.shape
+        image = QImage(rgb.tobytes(), w, h, ch * w, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(image).scaled(
+            self.batch_page.preview_label.width(),
+            self.batch_page.preview_label.height(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.batch_page.preview_label.setPixmap(pixmap)
+
+    def _on_batch_metrics_ready(self, metrics: DetectionMetrics) -> None:
+        self.batch_page.status_label.setText(
+            f"Yawn: {metrics.yawn_state} | Eyes: {metrics.left_eye_state}/{metrics.right_eye_state} | "
+            f"Blinks: {metrics.session_blinks} | Alerts: {metrics.alert_level}"
+        )
+
+    def _on_batch_progress(self, processed: int, total: int) -> None:
+        self.batch_page.set_progress(processed, total)
+
+    def _on_batch_status(self, message: str) -> None:
+        self.batch_page.append_summary(message)
+
+    def _on_batch_finished(self, summary: BatchSummary) -> None:
+        self.batch_page.set_running(False)
+        self.batch_page.append_summary(
+            f"Completed {summary.frames_processed} frames in {summary.elapsed_s:.1f}s."
+        )
+        self.batch_page.append_summary(f"CSV: {summary.csv_path}")
+        self.batch_page.append_summary(f"Summary JSON: {summary.summary_path}")
+        self.batch_page.append_summary(
+            f"Blinks={summary.blink_count}, Yawns={summary.yawn_count}, "
+            f"Alerts={summary.alert_count}, Microsleeps={summary.microsleep_episodes}"
+        )
+
+    def _on_batch_error(self, message: str) -> None:
+        self.batch_page.set_running(False)
+        self.batch_page.append_summary(f"Error: {message}")
