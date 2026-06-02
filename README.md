@@ -198,7 +198,7 @@ real-time-drowsy-driving-detection/
 
 Tune in [`app/config.py`](app/config.py): `TARGET_PROCESS_FPS`, `YOLO_INFERENCE_STRIDE`, `YOLO_IMGSZ`.
 
-- **Accuracy tuning** — Phase 1–style direct YOLO states (default), optional Kalman (`USE_KALMAN_SMOOTHING`), short yawn debounce (0.15s), yawn count suppressed only after eyes closed &gt; 0.25s (not quick blinks); **Show debug overlay** toggle.
+- **Accuracy tuning** — **EAR** (eye aspect ratio) for blinks via MediaPipe; **YOLO** for yawns; optional Kalman; yawn count suppressed only after eyes closed &gt; 0.25s; **Show debug overlay** shows live EAR values.
 
 ### Planned (Phases 3–6)
 

@@ -11,6 +11,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from app import config
+from app.core.ear_utils import EarBlinkTracker, compute_ear, ear_to_eye_state
 from app.core.kalman_smoother import ScalarKalmanFilter
 
 
@@ -32,8 +33,11 @@ class DetectionMetrics:
     yolo_ran: bool = False
     left_eye_score: float = 0.0
     right_eye_score: float = 0.0
+    left_ear: float = 0.0
+    right_ear: float = 0.0
     yawn_score: float = 0.0
     yawn_suppressed: bool = False
+    blink_method: str = ""
 
 
 @dataclass
@@ -69,6 +73,9 @@ class DrowsinessDetectorEngine:
         self.right_eye_still_closed = False
         self.yawn_in_progress = False
         self.yawn_candidate_duration = 0.0
+        self.left_ear = 0.3
+        self.right_ear = 0.3
+        self._ear_blink_tracker = EarBlinkTracker()
 
         self._frame_index = 0
         self._cached_rois = _CachedRois()
@@ -88,7 +95,7 @@ class DrowsinessDetectorEngine:
         self.face_mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=False,
             max_num_faces=1,
-            refine_landmarks=False,
+            refine_landmarks=config.MEDIAPIPE_REFINE_LANDMARKS,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
         )
@@ -121,6 +128,7 @@ class DrowsinessDetectorEngine:
         self._fps_frame_count = 0
         self._left_kalman.reset(0.0)
         self._right_kalman.reset(0.0)
+        self._ear_blink_tracker.reset()
         self._yawn_kalman.reset(0.0)
 
     def predict_eye(self, eye_frame: np.ndarray, eye_state: str) -> str:
@@ -246,19 +254,38 @@ class DrowsinessDetectorEngine:
         elif self._yawn_kalman.x <= 0.35:
             self.yawn_state = "No Yawn"
 
-    def _run_yolo_on_rois(self, rois: _CachedRois) -> None:
-        if config.USE_KALMAN_SMOOTHING:
-            self._apply_smoothed_states(rois)
-            return
+    def _update_eye_states_from_ear(
+        self, face_landmarks, image_width: int, image_height: int
+    ) -> None:
+        self.left_ear = compute_ear(
+            face_landmarks,
+            config.LEFT_EYE_EAR_IDS,
+            image_width,
+            image_height,
+        )
+        self.right_ear = compute_ear(
+            face_landmarks,
+            config.RIGHT_EYE_EAR_IDS,
+            image_width,
+            image_height,
+        )
+        self.left_eye_state, self.right_eye_state = (
+            self._ear_blink_tracker.closure_state(self.left_ear, self.right_ear)
+        )
 
-        if rois.left_eye is not None:
-            self.left_eye_state = self.predict_eye(
-                rois.left_eye, self.left_eye_state
-            )
-        if rois.right_eye is not None:
-            self.right_eye_state = self.predict_eye(
-                rois.right_eye, self.right_eye_state
-            )
+    def _run_yolo_on_rois(self, rois: _CachedRois) -> None:
+        if not config.USE_EAR_FOR_BLINKS:
+            if config.USE_KALMAN_SMOOTHING:
+                self._apply_smoothed_states(rois)
+            else:
+                if rois.left_eye is not None:
+                    self.left_eye_state = self.predict_eye(
+                        rois.left_eye, self.left_eye_state
+                    )
+                if rois.right_eye is not None:
+                    self.right_eye_state = self.predict_eye(
+                        rois.right_eye, self.right_eye_state
+                    )
         self.predict_yawn(rois.mouth)
 
     def _extract_rois(
@@ -320,32 +347,48 @@ class DrowsinessDetectorEngine:
             cached.left_eye = frame[y_leye_min:y_leye_max, x_leye_min:x_leye_max]
         return cached
 
-    def _both_eyes_closed(self) -> bool:
+    def _both_eyes_closed_for_microsleep(self) -> bool:
+        if config.USE_EAR_FOR_BLINKS:
+            return self._ear_blink_tracker.both_eyes_closed_for_microsleep(
+                self.left_ear, self.right_ear
+            )
         return self.left_eye_state == "Closed" and self.right_eye_state == "Closed"
 
     def _should_suppress_yawn_count(self) -> bool:
         if not config.SUPPRESS_YAWN_COUNT_WHEN_EYES_CLOSED:
             return False
         return (
-            self._both_eyes_closed()
+            self._both_eyes_closed_for_microsleep()
             and self.eyes_closed_duration >= config.YAWN_SUPPRESS_MIN_EYES_CLOSED_S
         )
 
     def _update_event_logic(self, frame_time: float) -> bool:
-        both_closed = self._both_eyes_closed()
         yawn_suppressed = False
 
-        if both_closed:
-            if not (self.left_eye_still_closed and self.right_eye_still_closed):
-                self.left_eye_still_closed = True
-                self.right_eye_still_closed = True
+        if config.USE_EAR_FOR_BLINKS:
+            if self._ear_blink_tracker.update(self.left_ear, self.right_ear):
                 self.blinks += 1
                 self.blink_timestamps.append(time.time())
+            microsleep_closed = self._both_eyes_closed_for_microsleep()
+        else:
+            microsleep_closed = (
+                self.left_eye_state == "Closed"
+                and self.right_eye_state == "Closed"
+            )
+            if microsleep_closed:
+                if not (self.left_eye_still_closed and self.right_eye_still_closed):
+                    self.left_eye_still_closed = True
+                    self.right_eye_still_closed = True
+                    self.blinks += 1
+                    self.blink_timestamps.append(time.time())
+            else:
+                if self.left_eye_still_closed and self.right_eye_still_closed:
+                    self.left_eye_still_closed = False
+                    self.right_eye_still_closed = False
+
+        if microsleep_closed:
             self.eyes_closed_duration += frame_time
         else:
-            if self.left_eye_still_closed and self.right_eye_still_closed:
-                self.left_eye_still_closed = False
-                self.right_eye_still_closed = False
             self.eyes_closed_duration = 0.0
 
         suppress_count = self._should_suppress_yawn_count()
@@ -384,12 +427,20 @@ class DrowsinessDetectorEngine:
         return self._last_process_fps
 
     def _eye_scores_for_display(self) -> tuple[float, float, float]:
+        if config.USE_EAR_FOR_BLINKS:
+            yawn_s = 1.0 if self.yawn_state == "Yawn" else 0.0
+            return self.left_ear, self.right_ear, yawn_s
         if config.USE_KALMAN_SMOOTHING:
             return self._left_kalman.x, self._right_kalman.x, self._yawn_kalman.x
         left_s = 1.0 if self.left_eye_state == "Closed" else 0.0
         right_s = 1.0 if self.right_eye_state == "Closed" else 0.0
         yawn_s = 1.0 if self.yawn_state == "Yawn" else 0.0
         return left_s, right_s, yawn_s
+
+    def _blink_method_label(self) -> str:
+        if config.USE_EAR_FOR_BLINKS:
+            return "EAR"
+        return "YOLO"
 
     def process_frame(
         self,
@@ -411,9 +462,11 @@ class DrowsinessDetectorEngine:
             image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self.face_mesh.process(image_rgb)
             if results.multi_face_landmarks:
-                self._cached_rois = self._extract_rois(
-                    frame, results.multi_face_landmarks[0]
-                )
+                landmarks = results.multi_face_landmarks[0]
+                ih, iw, _ = frame.shape
+                if config.USE_EAR_FOR_BLINKS:
+                    self._update_eye_states_from_ear(landmarks, iw, ih)
+                self._cached_rois = self._extract_rois(frame, landmarks)
             else:
                 self._cached_rois = _CachedRois()
 
@@ -434,6 +487,8 @@ class DrowsinessDetectorEngine:
             left_score=left_s,
             right_score=right_s,
             yawn_score=yawn_s,
+            left_ear=self.left_ear,
+            right_ear=self.right_ear,
         )
         self._draw_annotations(frame, rois.annotation_points, metrics)
         return frame, metrics
@@ -447,6 +502,8 @@ class DrowsinessDetectorEngine:
         left_score: float,
         right_score: float,
         yawn_score: float,
+        left_ear: float,
+        right_ear: float,
     ) -> DetectionMetrics:
         current_time = time.time()
         self.blink_timestamps = [
@@ -497,8 +554,11 @@ class DrowsinessDetectorEngine:
             yolo_ran=yolo_ran,
             left_eye_score=left_score,
             right_eye_score=right_score,
+            left_ear=left_ear,
+            right_ear=right_ear,
             yawn_score=yawn_score,
             yawn_suppressed=yawn_suppressed,
+            blink_method=self._blink_method_label(),
         )
 
     def _draw_annotations(
@@ -511,9 +571,11 @@ class DrowsinessDetectorEngine:
             cv2.circle(frame, (x, y), 2, (0, 255, 0), -1)
 
         eye_text = f"L:{metrics.left_eye_state} R:{metrics.right_eye_state}"
+        if config.USE_EAR_FOR_BLINKS:
+            eye_text += f" EAR:{metrics.left_ear:.2f}/{metrics.right_ear:.2f}"
         cv2.putText(
             frame, eye_text, (10, 24),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2,
         )
         cv2.putText(
             frame, f"Yawn: {metrics.yawn_state}", (10, 48),
@@ -531,9 +593,12 @@ class DrowsinessDetectorEngine:
 
         y = 100
         lines = [
-            f"L score:{metrics.left_eye_score:.2f}",
-            f"R score:{metrics.right_eye_score:.2f}",
-            f"Y score:{metrics.yawn_score:.2f}",
+            f"Blinks via {metrics.blink_method}",
+            f"L EAR:{metrics.left_ear:.2f} ({metrics.left_eye_state})",
+            f"R EAR:{metrics.right_ear:.2f} ({metrics.right_eye_state})",
+            f"L base:{self._ear_blink_tracker.left_baseline:.2f} "
+            f"R base:{self._ear_blink_tracker.right_baseline:.2f}",
+            f"Y yawn:{metrics.yawn_state}",
         ]
         if metrics.yawn_suppressed:
             lines.append("Yawn count paused (eyes closed)")

@@ -39,6 +39,24 @@ BLINK_WINDOW = 30
 
 SHOW_DEBUG_OVERLAY = False
 
+# Blink detection — EAR from MediaPipe (more reliable than YOLO on tiny eye ROIs)
+USE_EAR_FOR_BLINKS = True
+MEDIAPIPE_REFINE_LANDMARKS = True
+# Fixed threshold for microsleep (sustained closure)
+EAR_MICROSLEEP_THRESHOLD = 0.23
+# Adaptive blink — ignores small head-movement EAR dips
+EAR_BLINK_ABS_MAX = 0.22
+EAR_DROP_ABSOLUTE = 0.07
+EAR_DROP_RATIO = 0.78
+EAR_BASELINE_ALPHA = 0.08
+EAR_SYMMETRY_MAX_DIFF = 0.12
+BLINK_MIN_DURATION_S = 0.04
+BLINK_MAX_DURATION_S = 0.50
+BLINK_REFRACTORY_S = 0.22
+# Six landmarks per eye (MediaPipe face mesh indices)
+RIGHT_EYE_EAR_IDS = [33, 160, 158, 133, 153, 144]
+LEFT_EYE_EAR_IDS = [362, 385, 387, 263, 373, 380]
+
 LANDMARK_IDS = [187, 411, 152, 61, 68, 174, 399, 298]
 
 PAGE_WELCOME = 0

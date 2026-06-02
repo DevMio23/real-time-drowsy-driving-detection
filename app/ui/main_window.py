@@ -124,10 +124,18 @@ class MainWindow(QMainWindow):
             f"<p><b>Eyes closed:</b> {metrics.eyes_closed_duration:.2f}s</p>"
             f"<p><b>Current yawn:</b> {metrics.yawn_duration:.2f}s</p>"
             f"<p><b>Total yawns:</b> {metrics.total_yawns}</p>"
-            f"<p><b>Left / right eye:</b> {metrics.left_eye_state or '—'} / "
-            f"{metrics.right_eye_state or '—'}</p>"
-            f"<p><b>Yawn state:</b> {metrics.yawn_state or '—'}</p>"
+            f"<p><b>Eyes:</b> {metrics.left_eye_state or '—'} / "
+            f"{metrics.right_eye_state or '—'} "
+            f"({metrics.blink_method})</p>"
         )
+        if config.USE_EAR_FOR_BLINKS:
+            html += (
+                f"<p style='font-size: 11px; color: #7f8c8d;'>"
+                f"EAR L={metrics.left_ear:.2f} R={metrics.right_ear:.2f} "
+                f"(blink: drop &ge; {config.EAR_DROP_ABSOLUTE}, "
+                f"ratio &le; {config.EAR_DROP_RATIO})</p>"
+            )
+        html += f"<p><b>Yawn state:</b> {metrics.yawn_state or '—'}</p>"
         if metrics.yawn_suppressed:
             html += (
                 "<p style='font-size: 11px; color: #e67e22;'>"
