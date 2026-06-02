@@ -13,6 +13,7 @@ from ultralytics import YOLO
 from app import config
 from app.core.ear_utils import EarBlinkTracker, compute_ear, ear_to_eye_state
 from app.core.kalman_smoother import ScalarKalmanFilter
+from app.core.session_logger import SessionLogger
 
 
 @dataclass
@@ -38,6 +39,8 @@ class DetectionMetrics:
     yawn_score: float = 0.0
     yawn_suppressed: bool = False
     blink_method: str = ""
+    session_id: str = ""
+    log_file: str = ""
 
 
 @dataclass
@@ -76,6 +79,11 @@ class DrowsinessDetectorEngine:
         self.left_ear = 0.3
         self.right_ear = 0.3
         self._ear_blink_tracker = EarBlinkTracker()
+        self.session_logger: SessionLogger | None = None
+        self._microsleep_in_progress = False
+        self._was_yawn_in_progress = False
+        self._prev_alert_active = False
+        self._last_yawn_segment_duration = 0.0
 
         self._frame_index = 0
         self._cached_rois = _CachedRois()
@@ -109,6 +117,29 @@ class DrowsinessDetectorEngine:
     def close(self) -> None:
         self.face_mesh.close()
 
+    def set_session_logger(self, logger: SessionLogger | None) -> None:
+        self.session_logger = logger
+
+    def _log_event(
+        self,
+        event_type: str,
+        *,
+        duration_s: float = 0.0,
+        confidence: float = 0.0,
+        alert_level: str = "",
+    ) -> None:
+        if self.session_logger is None or not self.session_logger.is_active:
+            return
+        self.session_logger.log_event(
+            event_type,
+            duration_s=duration_s,
+            confidence=confidence,
+            left_eye=self.left_eye_state,
+            right_eye=self.right_eye_state,
+            yawn_state=self.yawn_state,
+            alert_level=alert_level,
+        )
+
     def reset_state(self) -> None:
         self.yawn_state = "No Yawn"
         self.left_eye_state = "Open"
@@ -130,6 +161,9 @@ class DrowsinessDetectorEngine:
         self._right_kalman.reset(0.0)
         self._ear_blink_tracker.reset()
         self._yawn_kalman.reset(0.0)
+        self._microsleep_in_progress = False
+        self._was_yawn_in_progress = False
+        self._prev_alert_active = False
 
     def predict_eye(self, eye_frame: np.ndarray, eye_state: str) -> str:
         """Direct YOLO classification (Phase 1 style) — responsive to blinks."""
@@ -369,6 +403,10 @@ class DrowsinessDetectorEngine:
             if self._ear_blink_tracker.update(self.left_ear, self.right_ear):
                 self.blinks += 1
                 self.blink_timestamps.append(time.time())
+                self._log_event(
+                    "blink",
+                    confidence=max(self.left_ear, self.right_ear),
+                )
             microsleep_closed = self._both_eyes_closed_for_microsleep()
         else:
             microsleep_closed = (
@@ -381,14 +419,24 @@ class DrowsinessDetectorEngine:
                     self.right_eye_still_closed = True
                     self.blinks += 1
                     self.blink_timestamps.append(time.time())
+                    self._log_event("blink")
             else:
                 if self.left_eye_still_closed and self.right_eye_still_closed:
                     self.left_eye_still_closed = False
                     self.right_eye_still_closed = False
 
         if microsleep_closed:
+            if not self._microsleep_in_progress:
+                self._microsleep_in_progress = True
+                self._log_event("microsleep_start")
             self.eyes_closed_duration += frame_time
         else:
+            if self._microsleep_in_progress:
+                self._log_event(
+                    "microsleep_end",
+                    duration_s=self.eyes_closed_duration,
+                )
+                self._microsleep_in_progress = False
             self.eyes_closed_duration = 0.0
 
         suppress_count = self._should_suppress_yawn_count()
@@ -398,7 +446,12 @@ class DrowsinessDetectorEngine:
                 yawn_suppressed = True
                 self.yawn_candidate_duration = 0.0
                 if self.yawn_in_progress:
+                    self._log_event(
+                        "yawn_end",
+                        duration_s=self.yawn_duration,
+                    )
                     self.yawn_in_progress = False
+                    self._was_yawn_in_progress = False
                 self.yawn_duration = 0.0
             else:
                 if not self.yawn_in_progress:
@@ -407,12 +460,19 @@ class DrowsinessDetectorEngine:
                         self.yawn_in_progress = True
                         self.yawns += 1
                         self.yawn_candidate_duration = 0.0
+                        self._was_yawn_in_progress = True
+                        self._log_event("yawn_start", confidence=0.8)
                 else:
                     self.yawn_duration += frame_time
         else:
             self.yawn_candidate_duration = 0.0
             if self.yawn_in_progress:
+                self._log_event(
+                    "yawn_end",
+                    duration_s=self.yawn_duration,
+                )
                 self.yawn_in_progress = False
+                self._was_yawn_in_progress = False
             self.yawn_duration = 0.0
 
         return yawn_suppressed
@@ -517,6 +577,7 @@ class DrowsinessDetectorEngine:
         )
         alert_active = False
 
+        alert_kind = ""
         if (
             self.yawn_duration >= config.YAWN_THRESHOLD
             or self.eyes_closed_duration >= config.MICROSLEEP_THRESHOLD
@@ -524,20 +585,34 @@ class DrowsinessDetectorEngine:
         ):
             alert_active = True
             if self.yawn_duration >= config.YAWN_THRESHOLD:
+                alert_kind = "alert_yawn"
                 alert_html = (
                     "<p style='color: red; font-weight: bold;'>"
                     "ALERT: Prolonged Yawn Detected</p>"
                 )
             elif self.eyes_closed_duration >= config.MICROSLEEP_THRESHOLD:
+                alert_kind = "alert_microsleep"
                 alert_html = (
                     "<p style='color: red; font-weight: bold;'>"
                     "ALERT: Microsleep Detected</p>"
                 )
             elif recent_blinks >= config.BLINK_THRESHOLD:
+                alert_kind = "alert_blink_rate"
                 alert_html = (
                     "<p style='color: red; font-weight: bold;'>"
                     "ALERT: Excessive Blinking</p>"
                 )
+
+        if alert_active and not self._prev_alert_active and alert_kind:
+            self._log_event(alert_kind, alert_level="critical")
+        self._prev_alert_active = alert_active
+
+        session_id = ""
+        log_file = ""
+        if self.session_logger and self.session_logger.is_active:
+            session_id = self.session_logger.session_id
+            if self.session_logger.csv_path:
+                log_file = str(self.session_logger.csv_path)
 
         return DetectionMetrics(
             alert_active=alert_active,
@@ -559,6 +634,8 @@ class DrowsinessDetectorEngine:
             yawn_score=yawn_score,
             yawn_suppressed=yawn_suppressed,
             blink_method=self._blink_method_label(),
+            session_id=session_id,
+            log_file=log_file,
         )
 
     def _draw_annotations(

@@ -39,6 +39,10 @@ BLINK_WINDOW = 30
 
 SHOW_DEBUG_OVERLAY = False
 
+# Phase 3 — session logging
+LOGS_DIR = PROJECT_ROOT / "logs" / "sessions"
+TREND_WINDOW_MINUTES = 10
+
 # Blink detection — EAR from MediaPipe (more reliable than YOLO on tiny eye ROIs)
 USE_EAR_FOR_BLINKS = True
 MEDIAPIPE_REFINE_LANDMARKS = True

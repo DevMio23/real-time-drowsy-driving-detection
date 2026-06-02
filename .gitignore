@@ -8,6 +8,7 @@
 /datasetsHungingFace
 /requirements
 yolov8n.pt
+logs/
 __pycache__/*
 */__pycache__/
 *__pycache__
