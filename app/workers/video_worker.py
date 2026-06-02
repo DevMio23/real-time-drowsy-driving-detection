@@ -31,6 +31,7 @@ class VideoWorker:
         self.stop_event = threading.Event()
         self.frame_queue: queue.Queue = queue.Queue(maxsize=config.FRAME_QUEUE_SIZE)
         self.cap: cv2.VideoCapture | None = None
+        self._cap_lock = threading.Lock()
         self.capture_thread: threading.Thread | None = None
         self.process_thread: threading.Thread | None = None
         self._running = False
@@ -46,20 +47,11 @@ class VideoWorker:
         self.stop_event.clear()
         self.engine.reset_state()
 
-        self.cap = cv2.VideoCapture(config.CAMERA_INDEX)
-        if not self.cap.isOpened():
-            self.signals.camera_error.emit(
-                "Camera not found or in use. Check that a webcam is connected."
-            )
-            if self.cap is not None:
-                self.cap.release()
-                self.cap = None
-            return False
-
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+        with self._cap_lock:
+            self.cap = None
 
         self._drain_queue()
+        self._running = True
         self.capture_thread = threading.Thread(
             target=self._capture_loop, name="capture", daemon=True
         )
@@ -68,7 +60,6 @@ class VideoWorker:
         )
         self.capture_thread.start()
         self.process_thread.start()
-        self._running = True
         return True
 
     def stop(self) -> None:
@@ -87,10 +78,11 @@ class VideoWorker:
                 thread.join(timeout=config.THREAD_JOIN_TIMEOUT_S)
 
     def _release_camera(self) -> None:
-        if self.cap is not None:
-            if self.cap.isOpened():
-                self.cap.release()
+        with self._cap_lock:
+            cap = self.cap
             self.cap = None
+        if cap is not None and cap.isOpened():
+            cap.release()
 
     def _drain_queue(self) -> None:
         while True:
@@ -99,12 +91,39 @@ class VideoWorker:
             except queue.Empty:
                 break
 
+    def _open_camera(self) -> cv2.VideoCapture | None:
+        cap = cv2.VideoCapture(config.CAMERA_INDEX)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+        return cap
+
     def _capture_loop(self) -> None:
+        cap = self._open_camera()
+        if cap is None:
+            self._running = False
+            self.signals.camera_error.emit(
+                "Camera not found or in use. Check that a webcam is connected."
+            )
+            return
+
+        with self._cap_lock:
+            if self.stop_event.is_set():
+                cap.release()
+                return
+            self.cap = cap
+
         interval = 1.0 / config.CAPTURE_FPS
 
-        while not self.stop_event.is_set() and self.cap is not None and self.cap.isOpened():
+        while not self.stop_event.is_set():
+            with self._cap_lock:
+                active_cap = self.cap
+            if active_cap is None or not active_cap.isOpened():
+                break
             loop_start = time.perf_counter()
-            ret, frame = self.cap.read()
+            ret, frame = active_cap.read()
             if not ret:
                 break
 

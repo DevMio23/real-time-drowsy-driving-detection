@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
 from app import config
 from app.core.detector import DetectionMetrics, DrowsinessDetectorEngine
+from app.core.session_logger import SessionLogger
 from app.ui.detection_page import DetectionPage
 from app.ui import styles
 from app.ui.welcome_page import WelcomePage
@@ -22,17 +23,18 @@ class MainWindow(QMainWindow):
     def __init__(self, engine: DrowsinessDetectorEngine | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Driver Drowsiness Detection System")
-        self.setGeometry(100, 100, 1000, 700)
+        self.setGeometry(100, 100, 1100, 720)
         self.setStyleSheet(styles.MAIN_WINDOW_STYLE)
 
         if engine is None:
-            # Fallback if constructed without main(); keep Qt-after-ML order in main.py.
             try:
                 engine = DrowsinessDetectorEngine()
             except Exception as exc:
                 print(f"Error loading models: {exc}")
                 sys.exit(1)
         self.engine = engine
+        self.session_logger = SessionLogger()
+        self.engine.set_session_logger(self.session_logger)
 
         self.signals = VideoSignals()
         self.video_worker = VideoWorker(self.engine, self.signals)
@@ -67,10 +69,10 @@ class MainWindow(QMainWindow):
     def _start_detection(self) -> None:
         if self.video_worker.is_running:
             return
-        if not self.video_worker.start():
-            self.detection_page.set_camera_error(
-                "Could not open the camera. Check permissions and that no other app is using it."
-            )
+        session_id = self.session_logger.start_session()
+        print(f"Session logging started: {session_id}")
+        self.engine.reset_state()
+        self.video_worker.start()
 
     def _stop_and_home(self) -> None:
         self.shutdown_detection()
@@ -81,6 +83,10 @@ class MainWindow(QMainWindow):
 
     def shutdown_detection(self) -> None:
         self.video_worker.stop()
+        if self.session_logger.is_active:
+            stats = self.session_logger.get_statistics()
+            print(f"Session saved: {stats.csv_path}")
+            self.session_logger.end_session()
 
     def shutdown(self) -> None:
         self.shutdown_detection()
@@ -104,6 +110,19 @@ class MainWindow(QMainWindow):
             Qt.SmoothTransformation,
         )
         self.detection_page.video_label.setPixmap(pixmap)
+
+    def _format_stats_html(self, stats) -> str:
+        elapsed_min = int(stats.elapsed_s // 60)
+        elapsed_sec = int(stats.elapsed_s % 60)
+        return (
+            f"<b>Elapsed:</b> {elapsed_min}m {elapsed_sec}s<br>"
+            f"<b>Blinks:</b> {stats.blink_count} "
+            f"({stats.blinks_per_min:.1f}/min)<br>"
+            f"<b>Yawns:</b> {stats.yawn_count} "
+            f"({stats.yawns_per_hour:.1f}/hr)<br>"
+            f"<b>Alerts:</b> {stats.alert_count} | "
+            f"<b>Microsleeps:</b> {stats.microsleep_episodes}"
+        )
 
     def _on_metrics_ready(self, metrics: DetectionMetrics) -> None:
         if self.stacked.currentIndex() != config.PAGE_DETECTION:
@@ -131,29 +150,31 @@ class MainWindow(QMainWindow):
         if config.USE_EAR_FOR_BLINKS:
             html += (
                 f"<p style='font-size: 11px; color: #7f8c8d;'>"
-                f"EAR L={metrics.left_ear:.2f} R={metrics.right_ear:.2f} "
-                f"(blink: drop &ge; {config.EAR_DROP_ABSOLUTE}, "
-                f"ratio &le; {config.EAR_DROP_RATIO})</p>"
+                f"EAR L={metrics.left_ear:.2f} R={metrics.right_ear:.2f}</p>"
             )
         html += f"<p><b>Yawn state:</b> {metrics.yawn_state or '—'}</p>"
         if metrics.yawn_suppressed:
             html += (
                 "<p style='font-size: 11px; color: #e67e22;'>"
-                "Yawn count paused (eyes closed &gt; "
-                f"{config.YAWN_SUPPRESS_MIN_EYES_CLOSED_S}s)</p>"
+                "Yawn count paused (eyes closed)</p>"
             )
         html += (
             f"<p style='font-size: 11px; color: #95a5a6;'>"
-            f"Process ~{metrics.process_fps:.1f} fps "
-            f"(target {config.TARGET_PROCESS_FPS})</p>"
-            "<hr style='border: 1px solid #bdc3c7;'/>"
-            "<p style='font-size: 12px; color: #7f8c8d;'>"
-            f"Alerts: yawn &ge; {config.YAWN_THRESHOLD}s, "
-            f"microsleep &ge; {config.MICROSLEEP_THRESHOLD}s, "
-            f"{config.BLINK_THRESHOLD} blinks in {config.BLINK_WINDOW}s"
-            "</p></div>"
+            f"Process ~{metrics.process_fps:.1f} fps</p>"
+            "</div>"
         )
         self.detection_page.info_label.setText(html)
 
+        if self.session_logger.is_active:
+            stats = self.session_logger.get_statistics()
+            self.detection_page.update_session_stats(
+                self._format_stats_html(stats),
+                stats.csv_path,
+                stats,
+            )
+
     def _on_camera_error(self, message: str) -> None:
+        self.video_worker.stop()
+        if self.session_logger.is_active:
+            self.session_logger.end_session()
         self.detection_page.set_camera_error(message)
