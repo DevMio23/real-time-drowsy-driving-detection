@@ -59,7 +59,7 @@ The upstream repo ([Prince-213/real-time-drowsy-driving-detection](https://githu
 | High CPU usage on modest laptops | Poor usability during long sessions | Planned Phase 1: FPS cap, inference stride, lighter MediaPipe |
 | Blink events misclassified as yawns | Unreliable metrics for validation | Planned Phase 2: debouncing, ROI/threshold fixes, Kalman smoothing |
 | No session logging / analytics | Hard to produce quantitative thesis results | Planned Phase 3: CSV logs + statistics panel |
-| Alerts partially disabled | Reduced practical safety value | Planned Phase 4: audio, visual, alert history |
+| Alerts partially disabled | Reduced practical safety value | **Phase 4:** audio with cooldown, visual banners, alert history |
 | No static project homepage | Hard for users vs developers to onboard | Planned Phase 6: `web/index.html` + in-app quick start |
 
 This fork preserves the upstream **training pipeline** (`CaptureData.py`, `AutoLabelling.py`, notebooks, `runs/` weights) and focuses upgrades on the **real-time detection application** and documentation.
@@ -79,7 +79,7 @@ Work proceeds in **phases**. Each phase is implemented and **tested before the n
 | **1** | CPU optimization (FPS cap, inference stride, lighter MediaPipe) | **Done** |
 | **2** | Detection accuracy (blink vs yawn, Kalman smoothing) | **Done** |
 | **3** | CSV session logging + statistics panel (thesis data) | **Done** |
-| **4** | Alerts: audio, visual, history, configurable thresholds | Planned |
+| **4** | Alerts: audio, visual, history, configurable thresholds | **Done** |
 | **5** | Batch video analysis (offline runs + reports) | Planned |
 | **6** | Static homepage (`web/`) + aligned in-app quick start | Planned |
 
@@ -114,7 +114,7 @@ cd real-time-drowsy-driving-detection
 
 - Python 3.10+ recommended  
 - Webcam  
-- Windows/Linux (audio alerts in later phases use `winsound` on Windows)  
+- Windows/Linux (alert sounds use `winsound` on Windows; terminal bell elsewhere)  
 - Trained weights under `runs/detecteye/` and `runs/detectyawn/` (included in repo)
 
 ### Install
@@ -186,7 +186,7 @@ real-time-drowsy-driving-detection/
 
 ## Features
 
-### Available now (Phases 0–3)
+### Available now (Phases 0–4)
 
 - **Unified PyQt5 app** with Welcome and Live detection screens  
 - **Lazy camera start** — webcam only after **Start Detection**  
@@ -194,14 +194,14 @@ real-time-drowsy-driving-detection/
 - **Thread-safe UI** — frames and metrics via Qt signals  
 - **Dual YOLOv8 models** + MediaPipe landmarks (same ML stack as upstream)  
 - **Real-time status panel** — blinks, eye closure, yawn duration, alert states  
-- **CPU tuning** — ~12 fps processing, 15 fps capture, YOLO every 2nd frame, `imgsz=160`, `refine_landmarks=False`, queue size 1, 640×480 camera  
+- **CPU tuning** — capped capture/process FPS, YOLO stride, queue size 1 — tune in [`app/config.py`](app/config.py)  
+- **Accuracy tuning** — **EAR** for blinks; **YOLO** for yawns; yawn count suppressed when eyes stay closed; optional debug overlay  
+- **Session logging** — CSV per session in `logs/sessions/`; live stats panel with per-minute trend chart  
+- **Alert system** — OK / warning / critical levels; red/orange frame border; on-frame banner; scrollable **alert history**; optional **alert sounds** with cooldown (`winsound` on Windows)
 
-Tune in [`app/config.py`](app/config.py): `TARGET_PROCESS_FPS`, `YOLO_INFERENCE_STRIDE`, `YOLO_IMGSZ`.
+Alert thresholds: `YAWN_THRESHOLD`, `MICROSLEEP_THRESHOLD`, `BLINK_THRESHOLD`, `ALERT_COOLDOWN_S`, `ALERT_WARNING_RATIO` in [`app/config.py`](app/config.py).
 
-- **Accuracy tuning** — **EAR** (eye aspect ratio) for blinks via MediaPipe; **YOLO** for yawns; optional Kalman; yawn count suppressed only after eyes closed &gt; 0.25s; **Show debug overlay** shows live EAR values.
-- **Session logging** — CSV per session in `logs/sessions/`; live stats panel with blinks/min, yawns/hr, and per-minute trend chart.
-
-### Planned (Phases 4–6)
+### Planned (Phases 5–6)
 
 See [Upgrade and implementation plan](#upgrade-and-implementation-plan) above.
 

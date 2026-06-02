@@ -21,6 +21,10 @@ class DetectionMetrics:
     """Snapshot of drowsiness metrics for the UI."""
 
     alert_active: bool = False
+    alert_level: str = "ok"
+    alert_kind: str = ""
+    alert_message: str = ""
+    alert_triggered: bool = False
     alert_html: str = ""
     recent_blinks: int = 0
     session_blinks: int = 0
@@ -82,7 +86,7 @@ class DrowsinessDetectorEngine:
         self.session_logger: SessionLogger | None = None
         self._microsleep_in_progress = False
         self._was_yawn_in_progress = False
-        self._prev_alert_active = False
+        self._prev_alert_level = "ok"
         self._last_yawn_segment_duration = 0.0
 
         self._frame_index = 0
@@ -163,7 +167,7 @@ class DrowsinessDetectorEngine:
         self._yawn_kalman.reset(0.0)
         self._microsleep_in_progress = False
         self._was_yawn_in_progress = False
-        self._prev_alert_active = False
+        self._prev_alert_level = "ok"
 
     def predict_eye(self, eye_frame: np.ndarray, eye_state: str) -> str:
         """Direct YOLO classification (Phase 1 style) — responsive to blinks."""
@@ -571,41 +575,73 @@ class DrowsinessDetectorEngine:
             if current_time - t <= config.BLINK_WINDOW
         ]
         recent_blinks = len(self.blink_timestamps)
+        warn_ratio = config.ALERT_WARNING_RATIO
 
-        alert_html = (
-            "<p style='color: green; font-weight: bold;'>Status: Driver Alert</p>"
-        )
-        alert_active = False
+        critical_yawn = self.yawn_duration >= config.YAWN_THRESHOLD
+        critical_micro = self.eyes_closed_duration >= config.MICROSLEEP_THRESHOLD
+        critical_blink = recent_blinks >= config.BLINK_THRESHOLD
+        warn_yawn = self.yawn_duration >= config.YAWN_THRESHOLD * warn_ratio
+        warn_micro = self.eyes_closed_duration >= config.MICROSLEEP_THRESHOLD * warn_ratio
+        warn_blink = recent_blinks >= config.BLINK_THRESHOLD * warn_ratio
 
+        alert_level = "ok"
         alert_kind = ""
-        if (
-            self.yawn_duration >= config.YAWN_THRESHOLD
-            or self.eyes_closed_duration >= config.MICROSLEEP_THRESHOLD
-            or recent_blinks >= config.BLINK_THRESHOLD
-        ):
-            alert_active = True
-            if self.yawn_duration >= config.YAWN_THRESHOLD:
-                alert_kind = "alert_yawn"
-                alert_html = (
-                    "<p style='color: red; font-weight: bold;'>"
-                    "ALERT: Prolonged Yawn Detected</p>"
-                )
-            elif self.eyes_closed_duration >= config.MICROSLEEP_THRESHOLD:
-                alert_kind = "alert_microsleep"
-                alert_html = (
-                    "<p style='color: red; font-weight: bold;'>"
-                    "ALERT: Microsleep Detected</p>"
-                )
-            elif recent_blinks >= config.BLINK_THRESHOLD:
-                alert_kind = "alert_blink_rate"
-                alert_html = (
-                    "<p style='color: red; font-weight: bold;'>"
-                    "ALERT: Excessive Blinking</p>"
-                )
+        alert_message = ""
+        alert_html = (
+            "<p style='color: #27ae60; font-weight: bold;'>Status: Alert</p>"
+        )
 
-        if alert_active and not self._prev_alert_active and alert_kind:
+        if critical_yawn or critical_micro or critical_blink:
+            alert_level = "critical"
+            if critical_yawn:
+                alert_kind = "alert_yawn"
+                alert_message = "ALERT: Prolonged yawn"
+                alert_html = (
+                    "<p style='color: #e74c3c; font-weight: bold;'>"
+                    "CRITICAL: Prolonged yawn detected</p>"
+                )
+            elif critical_micro:
+                alert_kind = "alert_microsleep"
+                alert_message = "ALERT: Microsleep"
+                alert_html = (
+                    "<p style='color: #e74c3c; font-weight: bold;'>"
+                    "CRITICAL: Microsleep detected</p>"
+                )
+            else:
+                alert_kind = "alert_blink_rate"
+                alert_message = "ALERT: Excessive blinking"
+                alert_html = (
+                    "<p style='color: #e74c3c; font-weight: bold;'>"
+                    "CRITICAL: Excessive blinking</p>"
+                )
+        elif warn_yawn or warn_micro or warn_blink:
+            alert_level = "warning"
+            if warn_yawn:
+                alert_kind = "warning_yawn"
+                alert_message = "Warning: Yawn duration rising"
+            elif warn_micro:
+                alert_kind = "warning_microsleep"
+                alert_message = "Warning: Eyes closed longer"
+            else:
+                alert_kind = "warning_blink_rate"
+                alert_message = "Warning: Blink rate rising"
+            alert_html = (
+                f"<p style='color: #e67e22; font-weight: bold;'>{alert_message}</p>"
+            )
+        else:
+            alert_html = (
+                "<p style='color: #27ae60; font-weight: bold;'>Status: Alert</p>"
+            )
+
+        alert_active = alert_level == "critical"
+        alert_triggered = (
+            alert_kind != ""
+            and alert_level != self._prev_alert_level
+            and alert_level != "ok"
+        )
+        if alert_triggered and alert_level == "critical":
             self._log_event(alert_kind, alert_level="critical")
-        self._prev_alert_active = alert_active
+        self._prev_alert_level = alert_level
 
         session_id = ""
         log_file = ""
@@ -616,6 +652,10 @@ class DrowsinessDetectorEngine:
 
         return DetectionMetrics(
             alert_active=alert_active,
+            alert_level=alert_level,
+            alert_kind=alert_kind,
+            alert_message=alert_message,
+            alert_triggered=alert_triggered,
             alert_html=alert_html,
             recent_blinks=recent_blinks,
             session_blinks=self.blinks,
@@ -659,10 +699,30 @@ class DrowsinessDetectorEngine:
             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2,
         )
 
-        if metrics.alert_active:
+        h, w = frame.shape[:2]
+        if metrics.alert_level == "critical" and metrics.alert_message:
+            banner_h = 36
+            cv2.rectangle(frame, (0, 0), (w, banner_h), (0, 0, 200), -1)
             cv2.putText(
-                frame, "ALERT", (10, 78),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2,
+                frame,
+                metrics.alert_message,
+                (10, 26),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2,
+            )
+        elif metrics.alert_level == "warning" and metrics.alert_message:
+            banner_h = 32
+            cv2.rectangle(frame, (0, 0), (w, banner_h), (0, 140, 255), -1)
+            cv2.putText(
+                frame,
+                metrics.alert_message,
+                (10, 24),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (255, 255, 255),
+                2,
             )
 
         if not self.show_debug_overlay:

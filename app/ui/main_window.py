@@ -11,6 +11,7 @@ from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
 from app import config
+from app.core.alert_manager import AlertManager
 from app.core.detector import DetectionMetrics, DrowsinessDetectorEngine
 from app.core.session_logger import SessionLogger
 from app.ui.detection_page import DetectionPage
@@ -34,6 +35,7 @@ class MainWindow(QMainWindow):
                 sys.exit(1)
         self.engine = engine
         self.session_logger = SessionLogger()
+        self.alert_manager = AlertManager()
         self.engine.set_session_logger(self.session_logger)
 
         self.signals = VideoSignals()
@@ -71,6 +73,8 @@ class MainWindow(QMainWindow):
             return
         session_id = self.session_logger.start_session()
         print(f"Session logging started: {session_id}")
+        self.alert_manager.reset()
+        self.detection_page.alert_history.clear_history()
         self.engine.reset_state()
         self.video_worker.start()
 
@@ -127,11 +131,26 @@ class MainWindow(QMainWindow):
     def _on_metrics_ready(self, metrics: DetectionMetrics) -> None:
         if self.stacked.currentIndex() != config.PAGE_DETECTION:
             return
-        border_color = "#e74c3c" if metrics.alert_active else styles.PANEL_BORDER
+        if metrics.alert_level == "critical":
+            border_color = styles.DANGER
+        elif metrics.alert_level == "warning":
+            border_color = styles.WARNING
+        else:
+            border_color = styles.PANEL_BORDER
         self.detection_page.video_label.setStyleSheet(
             f"border: 3px solid {border_color}; border-radius: 10px; "
             f"background-color: {styles.VIDEO_BG};"
         )
+
+        if metrics.alert_triggered and metrics.alert_kind:
+            record = self.alert_manager.record_alert(
+                metrics.alert_kind, metrics.alert_level
+            )
+            self.detection_page.add_alert_to_history(record)
+            if metrics.alert_level == "critical":
+                self.alert_manager.play_alert_sound(
+                    enabled=self.detection_page.alert_sounds_enabled()
+                )
         html = (
             "<div style='font-family: Segoe UI, sans-serif; color: #2c3e50;'>"
             "<h2 style='text-align: center; color: #3498db;'>Driver Status</h2>"

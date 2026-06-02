@@ -12,8 +12,11 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from app import config
+from app.core.alert_manager import AlertRecord
 from app.core.session_logger import SessionStatistics
 from app.ui import styles
+from app.ui.alert_history import AlertHistoryWidget
 from app.ui.stats_panel import StatsPanel
 
 
@@ -70,8 +73,10 @@ class DetectionPage(QWidget):
         self.log_path_label.setStyleSheet("color: #95a5a6; font-size: 9px;")
 
         self.stats_panel = StatsPanel()
+        self.alert_history = AlertHistoryWidget()
 
         scroll_layout.addWidget(self.info_label)
+        scroll_layout.addWidget(self.alert_history)
         scroll_layout.addWidget(self.stats_title)
         scroll_layout.addWidget(self.stats_summary)
         scroll_layout.addWidget(self.stats_panel)
@@ -82,6 +87,10 @@ class DetectionPage(QWidget):
         self.debug_checkbox.setStyleSheet(f"color: {styles.TEXT_DARK};")
         if self._on_debug_toggle is not None:
             self.debug_checkbox.toggled.connect(self._on_debug_toggle)
+
+        self.audio_checkbox = QCheckBox("Alert sounds")
+        self.audio_checkbox.setChecked(config.ALERT_AUDIO_ENABLED)
+        self.audio_checkbox.setStyleSheet(f"color: {styles.TEXT_DARK};")
 
         stop_btn = QPushButton("Stop Detection")
         stop_btn.setStyleSheet(styles.BTN_DANGER)
@@ -95,6 +104,7 @@ class DetectionPage(QWidget):
 
         panel_layout.addWidget(scroll, 1)
         panel_layout.addWidget(self.debug_checkbox)
+        panel_layout.addWidget(self.audio_checkbox)
         panel_layout.addWidget(stop_btn)
         panel_layout.addWidget(back_btn)
 
@@ -114,6 +124,13 @@ class DetectionPage(QWidget):
         self.stats_summary.setText("No active session.")
         self.log_path_label.setText("")
         self.stats_panel.update_statistics(SessionStatistics())
+        self.alert_history.clear_history()
+
+    def add_alert_to_history(self, record: AlertRecord) -> None:
+        self.alert_history.add_entry(record)
+
+    def alert_sounds_enabled(self) -> bool:
+        return self.audio_checkbox.isChecked()
 
     def update_session_stats(self, summary_html: str, log_path: str, stats) -> None:
         self.stats_summary.setText(summary_html)
