@@ -43,7 +43,7 @@ Monitor driver alertness in real time using facial landmarks, dual YOLOv8 models
 | Repository | Role | Link |
 |------------|------|------|
 | **Upstream (original fork source)** | Baseline implementation, datasets, training notebooks | [Prince-213/real-time-drowsy-driving-detection](https://github.com/Prince-213/real-time-drowsy-driving-detection) |
-| **This repository (your fork)** | Unified app, phased upgrades, documentation | [DevMio23/real-time-drowsy-driving-detection](https://github.com/DevMio23/real-time-drowsy-driving-detection) |
+| **This repository (This fork)** | Unified app, phased upgrades, documentation | [DevMio23/real-time-drowsy-driving-detection](https://github.com/DevMio23/real-time-drowsy-driving-detection) |
 | **Original author README** | Full baseline docs (install, datasets, training) | [Upstream README.md](https://github.com/Prince-213/real-time-drowsy-driving-detection/blob/main/README.md) |
 
 ---
